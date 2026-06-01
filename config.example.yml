@@ -1,0 +1,300 @@
+Events:
+  Comment:
+  - command: chatlog {tag} {user} {mc} {comment}
+    type: minecraft
+  Follow:
+  - command: tntspawn {mc} 10 {user} Follow
+    type: minecraft
+  - command: chatlog follow {user} {mc}
+    type: minecraft
+  Like:
+    actions:
+    - command: scoreboard players set Likes stats {total_likes}
+      type: minecraft
+    mode: every_like
+  Like_10000:
+    actions:
+    - command: tntspawn {mc} 500 Likes
+      type: minecraft
+    interval: 10000
+    mode: every_n
+  Like_500:
+    actions:
+    - command: spawnmob {mc} 1 baby husk Likes
+      type: minecraft
+    interval: 500
+    mode: every_n
+  SuperFan:
+  - command: subscribe {mc} {user}
+    type: minecraft
+  - file: D:\Ikhito\Code\TikTokMCIntegrator\sounds\SLAP_SOUND_EFFECT.mp3
+    type: sound
+    volume: 0.8
+GiftCategories:
+  '5269': 1 Coin
+  '5333': 1 Coin
+  '5487': 5 Coins
+  '5509': 200 Coins
+  '5566': 100 Coins
+  '5569': 300 Coins
+  '5585': 100 Coins
+  '5598': 200 Coins
+  '5599': 200 Coins
+  '5655': 1 Coin
+  '5658': 20 Coins
+  '5659': 100 Coins
+  '5660': 100 Coins
+  '5731': 500 Coins
+  '5778': 1 Coin
+  '5779': 10 Coins
+  '5780': 30 Coins
+  '5827': 1 Coin
+  '5879': 30 Coins
+  '5897': 700 Coins
+  '6064': 1 Coin
+  '6090': 1000 Coins
+  '6097': 100 Coins
+  '6267': 300 Coins
+  '6427': 100 Coins
+  '6563': 3000 Coins
+  '7121': 100 Coins
+  '7168': 500 Coins
+  '7934': 1 Coin
+  '8913': 10 Coins
+  '9463': 1 Coin
+  '9947': 10 Coins
+  '10584': 100 Coins
+  '10715': 1 Coin
+  '10716': 1 Coin
+  '10994': 100 Coins
+  '10996': 1 Coin
+  '11046': 1000 Coins
+  '13072': 500 Coins
+  '13651': 1 Coins
+  '13707': 200 Coins
+  '15046': 1 Coin
+  '15049': 5 Coins
+  '15063': 10 Coins
+  '15232': 1 Coin
+  '16819': 500 Coins
+  '18196': 500 Coins
+  '19447': 5 Coins
+  super gg: 100 Coins
+GiftNames:
+  '5269': tiktok
+  '5333': coffee
+  '5487': finger heart
+  '5509': sunglasses
+  '5566': mishka bear
+  '5569': diamond ring of love
+  '5585': confetti
+  '5598': diamond heart necklace
+  '5599': gold necklace
+  '5655': rose
+  '5658': perfume
+  '5659': paper crane
+  '5660': hand heart
+  '5731': coral
+  '5778': orange juice
+  '5779': i love you
+  '5780': bouquet flower
+  '5827': ice cream cone
+  '5879': doughnut
+  '5897': swan
+  '6064': gg
+  '6090': fireworks
+  '6097': little crown
+  '6267': corgi
+  '6427': hat and mustache
+  '6563': meteor shower
+  '7121': marvelous confetti
+  '7168': money gun
+  '7934': heart me
+  '8913': rosa
+  '9463': fairy wings
+  '9947': friendship necklace
+  '10584': chicken and cola
+  '10715': headphone
+  '10716': blow a kiss
+  '10994': bouquet
+  '10996': power hug
+  '11046': galaxy
+  '13072': dragon crown
+  '13651': go popular
+  '13707': balloons
+  '15046': fried
+  '15049': padang rice
+  '15063': journey pass
+  '15232': you're awesome
+  '16819': prince
+  '18196': surfing penguin
+  '19447': overreact
+Gifts:
+  '5269':
+  - spawnmob {mc} {amount} baby husk {user}
+  - titlecustom '{user}' {mc} {amount} Baby Husk
+  '5333':
+  - spawnsilverfish {mc} {amount*5} {user}
+  - titlecustom '{user}' {mc} {amount*5} Silverfish
+  '5487':
+  - spawnmob {mc} {amount*5} vex {user}
+  - titlecustom '{user}' {mc} {amount*5} Vex
+  '5509':
+  - spawnmob {mc} {amount} wither {user}
+  - titlecustom '{user}' {mc} Wither
+  '5566':
+  - execute at {mc} run summon luckytntmod:village_defense ~ ~ ~ {Fuse:0}
+  - titlecustom '{user}' {mc} Golem Army
+  '5569':
+  - execute at {mc} run summon cataclysm:netherite_monstrosity ~ ~ ~ {CustomName:'"{user}"',CustomNameVisible:1b}
+  - titlecustom '{user}' {mc} Netherite Monstrosity
+  '5585':
+  - execute at {mc} run summon luckytntmod:nuclear_tnt ~ ~ ~ {Fuse:20}
+  - titlecustom '{user}' {mc} Nuclear
+  '5598':
+  - execute at {mc} run summon luckytntmod:pompeii ~ ~ ~ {Fuse:200}
+  - titlecustom '{user}' {mc} Volcano
+  '5599':
+  - spawnmob {mc} {amount} warden {user}
+  - titlecustom '{user}' {mc} Warden
+  '5655':
+  - tntspawn {mc} {amount} {user}
+  - titlecustom '{user}' {mc} {amount} TNT
+  '5658':
+  - spawnmob {mc} {amount*15} charged creeper {user}
+  - titlecustom '{user}' {mc} {amount*15} Charge Creeper
+  '5659':
+  - rtp {mc} {user}
+  '5660':
+  - execute at {mc} run fill ~10 ~3 ~10 ~-10 ~ ~-10 air replace water
+  - execute at {mc} run fill ~10 ~3 ~10 ~-10 ~ ~-10 lava replace
+  - titlecustom '{user}' {mc} Lava Pool
+  '5731':
+  - execute at {mc} run summon cataclysm:ignis ~ ~ ~ {CustomName:'"{user}"',CustomNameVisible:1b}
+  - titlecustom '{user}' {mc} Ignis
+  '5778':
+  - lightningstrike {mc} {amount*5}
+  - titlecustom '{user}' {mc} {amount} Lightning Bolt
+  '5779':
+  - cobwebtrap {mc} {amount}
+  - titlecustom '{user}' {mc} {amount} Cobweb Trap
+  '5780':
+  - revealore {mc}
+  - titlecustom '{user}' {mc} Revelio
+  '5827':
+  - give {mc} minecraft:totem_of_undying {amount}
+  - titlecustom '{user}' {mc} {amount} Totem
+  '5879':
+  - tntspawn {mc} {amount*50} {user}
+  '5897':
+  - clearinven {mc}
+  - score remove win 3 {mc}
+  - titlecustom '{user}' {mc} Clear Inventory
+  '6064':
+  - give {mc} minecraft:cooked_beef {amount*5}
+  - titlecustom '{user}' {mc} {amount*5} Steaks
+  '6090':
+  - tntrain {mc} start
+  - score remove win 5 {mc}
+  - titlecustom '{user}' {mc} TNT Rain
+  '6097':
+  - spawnmob {mc} {amount*20} ravager {user}
+  - titlecustom '{user}' {mc} 20 Ravager
+  '6267':
+  - execute at {mc} run summon luckytntmod:death_ray ~ ~ ~ {Fuse:100}
+  - titlecustom '{user}' {mc} Death Ray
+  '6427':
+  - spawnmob {mc} {amount*20} vindicator {user}
+  - titlecustom '{user}' {mc} 20 Vindicator
+  '6563':
+  - execute at {mc} run summon witherstormmod:wither_storm ~ ~ ~ {Phase:7,ConsumedEntities:3000000,CustomNameVisible:1b,CustomName:'{"text":"{user}","color":"gold"}'}
+  - wskit {mc}
+  - surface {mc}
+  - execute at {mc} run witherstormmod ultimateTarget set @e[type=witherstormmod:wither_storm,limit=1]
+    {mc}
+  - titlecustom '{user}' {mc} Wither Storm
+  '7121':
+  - execute at {mc} run summon luckytntmod:nuclear_tnt ~ ~ ~ {Fuse:20}
+  - titlecustom '{user}' {mc} Nuclear
+  '7168':
+  - tntspawn {mc} {amount*1500} {user}
+  - titlecustom '{user}' {mc} 1500 TNT
+  - score remove win 1 {mc}
+  '7934':
+  - tntspawn {mc} 50 {user}
+  '8913':
+  - diamondpick {mc} {amount}
+  - titlecustom '{user}' {mc} {amount} Diamond Pickaxe
+  '9463':
+  - give {mc} minecraft:golden_apple {amount}
+  - titlecustom '{user}' {mc} {amount} Golden Apple
+  '9947':
+  - disableminegift {mc} {amount} add {user}
+  '10584':
+  - setspawn {mc}
+  '10715':
+  - give {mc} minecraft:raw_iron {amount*4}
+  - titlecustom '{user}' {mc} {amount*4} Iron
+  '10716':
+  - spawnmonkey {mc} {amount} {user}
+  - titlecustom '{user}' {mc} {amount} Monkey
+  '10994':
+  - spawnsilverfish {mc} {amount*500} {user}
+  - titlecustom '{user}' {mc} 500 Silverfish
+  '10996':
+  - spawnmob {mc} {amount} cave spider {user}
+  - titlecustom '{user}' {mc} {amount} Cave Spiders
+  '11046':
+  - keepinventory {mc}
+  '13072':
+  - helpwin {mc}
+  - score add win 3 {mc}
+  - titlecustom '{user}' {mc} Help Win!
+  '13651':
+  - spawnmob {mc} {amount*2} witch {user}
+  - titlecustom '{user}' {mc} {amount*2} Witch
+  '13707':
+  - spawnmob {mc} {amount} wither {user}
+  - titlecustom '{user}' {mc} Wither
+  '15046':
+  - randommob {mc} {amount} {user}
+  '15049':
+  - randommob {mc} {amount*5} {user}
+  - titlecustom '{user}' {mc} {amount*5} Random Mob
+  '15063':
+  - randompotions {mc} {amount} {user}
+  '15232':
+  - cow {mc} {amount} {user}
+  - titlecustom '{user}' {mc} {amount} Cow
+  '16819':
+  - helpwin {mc}
+  - score add win 3 {mc}
+  - titlecustom '{user}' {mc} Help Win!
+  '18196':
+  - execute at {mc} run summon cataclysm:maledictus ~ ~ ~ {CustomName:'"{user}"',CustomNameVisible:1b}
+  - titlecustom '{user}' {mc} Maledictus
+  '19447':
+  - spawnmob {mc} {amount*5} vex {user}
+  - titlecustom '{user}' {mc} {amount*5} Vex
+  GlobalActions:
+  - command: chatgift {gift_name} {repeat_count} {user} {total_coin} {mc}
+    type: minecraft
+  - command: score add coins {total_coin} {mc}
+    type: minecraft
+  super gg:
+  - execute at {mc} run fill ~10 ~3 ~10 ~-10 ~ ~-10 air replace lava
+  - execute at {mc} run fill ~10 ~3 ~10 ~-10 ~ ~-10 water replace
+  - titlecustom '{user}' {mc} Water Pool
+Rcon:
+  Host: YOUR_MINECRAFT_SERVER_IP
+  Password: YOUR_RCON_PASSWORD
+  Port: 25575
+Settings:
+  EulerApiKey: YOUR_EULER_API_KEY
+  MinecraftUsername: YOUR_MINECRAFT_USERNAME
+  TikTokUsername: YOUR_TIKTOK_USERNAME
+StreakDeltaGifts:
+- '5827'
+VIP_List:
+- example_vip_user_1
+- example_vip_user_2

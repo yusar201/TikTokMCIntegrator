@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TikTokMCIntegrator — Chat Tier Redesign Preview</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg-dark: #0a0a0f;
+    --bg-card: #12121a;
+    --bg-entry: #1a1a28;
+    --text-primary: #e8e8f0;
+    --text-secondary: #8888a0;
+    --text-muted: #55556a;
+    --accent: #7c3aed;
+    --accent-glow: rgba(124, 58, 237, 0.3);
+    --border: #2a2a3a;
+
+    /* Tier colors */
+    --tier1-primary: #06b6d4;
+    --tier1-glow: rgba(6, 182, 212, 0.4);
+    --tier1-bg: rgba(6, 182, 212, 0.06);
+
+    --tier2-primary: #a855f7;
+    --tier2-secondary: #ec4899;
+    --tier2-glow: rgba(168, 85, 247, 0.4);
+    --tier2-bg: rgba(168, 85, 247, 0.06);
+
+    --tier3-primary: #f59e0b;
+    --tier3-secondary: #f97316;
+    --tier3-glow: rgba(245, 158, 11, 0.4);
+    --tier3-bg: rgba(245, 158, 11, 0.06);
+
+    --tier4-primary: #ff0080;
+    --tier4-secondary: #ffdd00;
+    --tier4-glow: rgba(255, 0, 128, 0.4);
+    --tier4-bg: rgba(255, 0, 128, 0.06);
+  }
+
+  body {
+    background: var(--bg-dark);
+    color: var(--text-primary);
+    font-family: 'Inter', -apple-system, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 40px 20px;
+  }
+
+  .preview-container {
+    width: 100%;
+    max-width: 520px;
+  }
+
+  h1 {
+    font-size: 28px;
+    font-weight: 800;
+    margin-bottom: 6px;
+    background: linear-gradient(135deg, #a855f7, #ec4899, #f59e0b);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .subtitle {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin-bottom: 32px;
+  }
+
+  /* ===== Chat Panel ===== */
+  .chat-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  .chat-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .chat-header h3 {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .chat-count {
+    font-size: 12px;
+    color: var(--text-muted);
+    background: rgba(255,255,255,0.05);
+    padding: 3px 10px;
+    border-radius: 12px;
+  }
+
+  .chat-log {
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  /* ===== Base Chat Entry ===== */
+  .chat-entry {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: var(--bg-entry);
+    border-left: 3px solid transparent;
+    overflow: visible;
+    transition: background 0.2s;
+  }
+
+  .chat-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  .chat-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .chat-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .chat-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 3px;
+  }
+
+  .chat-nick {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .chat-level {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 8px;
+    letter-spacing: 0.03em;
+  }
+
+  .chat-badges {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+
+  .chat-badge-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    object-fit: cover;
+  }
+
+  .chat-message {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
+
+  /* ===== Sparkle particles ===== */
+  .sparkle {
+    position: absolute;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    pointer-events: none;
+    animation: sparkleFloat 2s ease-in-out infinite;
+  }
+
+  @keyframes sparkleFloat {
+    0% { transform: translateY(0) scale(0); opacity: 0; }
+    50% { transform: translateY(-12px) scale(1); opacity: 1; }
+    100% { transform: translateY(-24px) scale(0); opacity: 0; }
+  }
+
+  /* ===== TIER LABEL BADGE ===== */
+  .tier-label {
+    position: absolute;
+    top: -1px;
+    right: 10px;
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 0 0 6px 6px;
+    z-index: 2;
+  }
+
+  /* ============================================================
+     TIER 1: Cyan (Level 20-24)
+     Subtle shimmer border + gentle glow
+     ============================================================ */
+  .tier-1 {
+    border-left: 3px solid var(--tier1-primary);
+    background: linear-gradient(135deg, var(--tier1-bg), transparent 60%);
+  }
+
+  .tier-1 .chat-nick { color: #67e8f9; }
+
+  .tier-1 .chat-level {
+    background: rgba(6, 182, 212, 0.2);
+    color: #67e8f9;
+    border: 1px solid rgba(6, 182, 212, 0.3);
+  }
+
+  .tier-1 .tier-label {
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.25), rgba(6, 182, 212, 0.1));
+    color: #67e8f9;
+  }
+
+  .tier-1::after {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: -1px;
+    right: -1px;
+    bottom: -1px;
+    border-radius: inherit;
+    border: 1px solid transparent;
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.3), transparent 50%, rgba(6, 182, 212, 0.15)) border-box;
+    -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+    animation: tier1BorderPulse 3s ease-in-out infinite;
+  }
+
+  @keyframes tier1BorderPulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+
+  /* ============================================================
+     TIER 2: Purple-Pink (Level 25-29)
+     Animated gradient border + glow + shimmer sweep
+     ============================================================ */
+  .tier-2 {
+    border: 2px solid transparent;
+    background: linear-gradient(135deg, var(--tier2-bg), rgba(236, 72, 153, 0.04) 60%);
+    animation: tier2Glow 3s ease-in-out infinite;
+  }
+
+  .tier-2 .chat-nick {
+    background: linear-gradient(90deg, #c084fc, #f472b6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .tier-2 .chat-level {
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.25), rgba(236, 72, 153, 0.25));
+    color: #e879f9;
+    border: 1px solid rgba(168, 85, 247, 0.4);
+  }
+
+  .tier-2 .tier-label {
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.3), rgba(236, 72, 153, 0.2));
+    color: #e879f9;
+  }
+
+  .tier-2::before {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    background: linear-gradient(45deg, #a855f7, #ec4899, #a855f7, #ec4899);
+    background-size: 300% 300%;
+    animation: tier2BorderRotate 4s ease infinite;
+    z-index: -1;
+    border-radius: inherit;
+  }
+
+  @keyframes tier2Glow {
+    0%, 100% { box-shadow: 0 0 12px rgba(168, 85, 247, 0.3), 0 0 24px rgba(236, 72, 153, 0.15); }
+    50% { box-shadow: 0 0 20px rgba(168, 85, 247, 0.5), 0 0 40px rgba(236, 72, 153, 0.25); }
+  }
+
+  @keyframes tier2BorderRotate {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+
+  /* ============================================================
+     TIER 3: Amber-Orange (Level 30-34)
+     Pulsing glow + animated border + floating star + sparkles
+     ============================================================ */
+  .tier-3 {
+    border: 2px solid transparent;
+    background: linear-gradient(135deg, var(--tier3-bg), rgba(249, 115, 22, 0.04) 60%);
+    animation: tier3Glow 2.5s ease-in-out infinite;
+  }
+
+  .tier-3 .chat-nick {
+    background: linear-gradient(90deg, #fbbf24, #f97316);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: 700;
+  }
+
+  .tier-3 .chat-level {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(249, 115, 22, 0.3));
+    color: #fcd34d;
+    border: 1px solid rgba(245, 158, 11, 0.5);
+    animation: tier3LevelPulse 2s ease-in-out infinite;
+  }
+
+  .tier-3 .tier-label {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.35), rgba(249, 115, 22, 0.25));
+    color: #fcd34d;
+    animation: tier3LabelGlow 2s ease-in-out infinite;
+  }
+
+  .tier-3::before {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    background: linear-gradient(45deg, #f59e0b, #f97316, #fbbf24, #f97316, #f59e0b);
+    background-size: 400% 400%;
+    animation: tier3BorderFlow 3s ease infinite;
+    z-index: -1;
+    border-radius: inherit;
+  }
+
+  .tier-3 .star-deco {
+    position: absolute;
+    top: 2px;
+    right: 8px;
+    font-size: 10px;
+    animation: starTwinkle 1.5s ease-in-out infinite;
+  }
+
+  @keyframes tier3Glow {
+    0%, 100% { box-shadow: 0 0 15px rgba(245, 158, 11, 0.4), 0 0 30px rgba(249, 115, 22, 0.2), inset 0 0 15px rgba(245, 158, 11, 0.05); }
+    50% { box-shadow: 0 0 25px rgba(245, 158, 11, 0.6), 0 0 50px rgba(249, 115, 22, 0.35), inset 0 0 25px rgba(245, 158, 11, 0.1); }
+  }
+
+  @keyframes tier3BorderFlow {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+
+  @keyframes tier3LevelPulse {
+    0%, 100% { box-shadow: 0 0 4px rgba(245, 158, 11, 0.3); }
+    50% { box-shadow: 0 0 10px rgba(245, 158, 11, 0.6); }
+  }
+
+  @keyframes tier3LabelGlow {
+    0%, 100% { text-shadow: 0 0 4px rgba(245, 158, 11, 0.4); }
+    50% { text-shadow: 0 0 10px rgba(245, 158, 11, 0.8); }
+  }
+
+  @keyframes starTwinkle {
+    0%, 100% { opacity: 1; transform: scale(1) rotate(0deg); }
+    50% { opacity: 0.4; transform: scale(0.7) rotate(20deg); }
+  }
+
+  /* ============================================================
+     TIER 4: Rainbow / Neon Pink-Gold (Level 35+)
+     MAXIMUM FLASH: rainbow border, crown, particles, glow aura
+     ============================================================ */
+  .tier-4 {
+    border: 3px solid transparent;
+    background: linear-gradient(135deg, rgba(255, 0, 128, 0.1), rgba(255, 221, 0, 0.08), rgba(0, 255, 127, 0.06));
+    animation: tier4Entrance 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55) both;
+  }
+
+  .tier-4 .chat-nick {
+    background: linear-gradient(90deg, #ff0080, #ffdd00, #00ff7f, #00bfff, #ff0080);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: tier4NameFlow 3s linear infinite;
+    font-weight: 800;
+  }
+
+  .tier-4 .chat-level {
+    background: linear-gradient(135deg, rgba(255, 0, 128, 0.35), rgba(255, 221, 0, 0.3));
+    color: #fff;
+    border: 1px solid rgba(255, 0, 128, 0.5);
+    animation: tier4LevelGlow 1.5s ease-in-out infinite;
+    font-weight: 800;
+  }
+
+  .tier-4 .tier-label {
+    background: linear-gradient(90deg, rgba(255, 0, 128, 0.4), rgba(255, 221, 0, 0.3), rgba(0, 255, 127, 0.3));
+    color: #fff;
+    animation: tier4LabelFlash 2s ease-in-out infinite;
+    font-weight: 800;
+    letter-spacing: 0.15em;
+  }
+
+  .tier-4::before {
+    content: '';
+    position: absolute;
+    top: -3px;
+    left: -3px;
+    right: -3px;
+    bottom: -3px;
+    background: linear-gradient(45deg, #ff0080, #ffdd00, #00ff7f, #00bfff, #ff0080, #ffdd00);
+    background-size: 600% 600%;
+    animation: rainbowBorder 2.5s linear infinite;
+    z-index: -1;
+    border-radius: inherit;
+  }
+
+  /* Outer glow aura */
+  .tier-4::after {
+    content: '';
+    position: absolute;
+    top: -8px;
+    left: -8px;
+    right: -8px;
+    bottom: -8px;
+    background: radial-gradient(ellipse, rgba(255, 0, 128, 0.15), rgba(255, 221, 0, 0.08), transparent 70%);
+    animation: tier4AuraPulse 2s ease-in-out infinite;
+    pointer-events: none;
+    z-index: -2;
+    border-radius: inherit;
+  }
+
+  .tier-4 .crown-deco {
+    position: absolute;
+    top: -10px;
+    right: 10px;
+    font-size: 14px;
+    animation: crownBounce 1.2s ease-in-out infinite;
+    z-index: 3;
+    filter: drop-shadow(0 0 6px rgba(255, 221, 0, 0.6));
+  }
+
+  @keyframes tier4Entrance {
+    0% { transform: scale(0.8) translateY(10px); opacity: 0; }
+    100% { transform: scale(1) translateY(0); opacity: 1; }
+  }
+
+  @keyframes tier4NameFlow {
+    0% { background-position: 0% center; }
+    100% { background-position: 200% center; }
+  }
+
+  @keyframes tier4LevelGlow {
+    0%, 100% { box-shadow: 0 0 6px rgba(255, 0, 128, 0.4); }
+    50% { box-shadow: 0 0 14px rgba(255, 0, 128, 0.8), 0 0 20px rgba(255, 221, 0, 0.3); }
+  }
+
+  @keyframes tier4LabelFlash {
+    0%, 100% { text-shadow: 0 0 6px rgba(255, 0, 128, 0.6); }
+    33% { text-shadow: 0 0 10px rgba(255, 221, 0, 0.8); }
+    66% { text-shadow: 0 0 10px rgba(0, 255, 127, 0.6); }
+  }
+
+  @keyframes rainbowBorder {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 600% 50%; }
+  }
+
+  @keyframes tier4AuraPulse {
+    0%, 100% { opacity: 0.5; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.02); }
+  }
+
+  @keyframes crownBounce {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    25% { transform: translateY(-3px) rotate(-5deg); }
+    75% { transform: translateY(-2px) rotate(5deg); }
+  }
+
+  /* Sparkle particles for tier 3 & 4 */
+  .sparkle-particle {
+    position: absolute;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  .tier-3 .sparkle-particle {
+    animation: sparkleDrift 2.5s ease-in-out infinite;
+  }
+
+  .tier-4 .sparkle-particle {
+    animation: sparkleDrift 1.8s ease-in-out infinite;
+  }
+
+  @keyframes sparkleDrift {
+    0% { transform: translate(0, 0) scale(0); opacity: 0; }
+    30% { transform: translate(var(--tx), var(--ty)) scale(1); opacity: 1; }
+    100% { transform: translate(calc(var(--tx) * 1.5), calc(var(--ty) * 1.8)) scale(0); opacity: 0; }
+  }
+
+  /* ===== Tier Legend ===== */
+  .tier-legend {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 20px;
+    padding: 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  /* ===== Section dividers ===== */
+  .section-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 24px 0 10px;
+    padding-left: 4px;
+  }
+
+  /* Reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="preview-container">
+  <h1>Chat Tier Redesign</h1>
+  <p class="subtitle">4 gifter level tiers — 20+ only</p>
+
+  <div class="chat-panel">
+    <div class="chat-header">
+      <h3>💬 Live Chat</h3>
+      <span class="chat-count">14 messages</span>
+    </div>
+    <div class="chat-log">
+
+      <!-- Normal entry (no tier) -->
+      <div class="chat-entry">
+        <div class="chat-avatar">A</div>
+        <div class="chat-body">
+          <div class="chat-meta">
+            <span class="chat-nick">anon_viewer</span>
+            <span class="chat-message">hey everyone!</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-entry">
+        <div class="chat-avatar">M</div>
+        <div class="chat-body">
+          <div class="chat-meta">
+            <span class="chat-nick">minecraft_fan99</span>
+            <span class="chat-message">lets gooo 🎮</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-label">— Tier 1 · Level 20-24 · Cyan —</div>
+
+      <!-- TIER 1: Cyan shimmer -->
+      <div class="chat-entry tier-1">
+        <div class="chat-avatar" style="background:#06b6d4;">S</div>
+        <div class="chat-body">
+          <div class="chat-meta">
+            <span class="chat-nick">sky_dreamer</span>
+            <span class="chat-level">Lv.22</span>
+            <span class="chat-message">nice stream!</span>
+          </div>
+        </div>
+        <span class="tier-label">TIER 1</span>
+      </div>
+
+      <div class="chat-entry tier-1">
+        <div class="chat-avatar" style="background:#0891b2;">R</div>
+        <div class="chat-body">
+          <div class="chat-meta">
+            <span class="chat-nick">rocky_gamer</span>
+            <span class="chat-level">Lv.20</span>
+            <span class="chat-message">drop a diamond pls 💎</span>
+          </div>
+        </div>
+        <span class="tier-label">TIER 1</span>
+      </div>
+
+      <div class="section-label">— Tier 2 · Level 25-29 · Purple-Pink —</div>
+
+      <!-- TIER 2: Purple-pink animated border -->
+      <div class="chat-entry tier-2">
+        <div class="chat-avatar" style="background:linear-gradient(135deg,#a855f7,#ec4899);">N</div>
+        <div class="chat-body">
+          <div class="chat-meta">
+            <span class="chat-nick">neon_princess</span>
+            <span class="chat-level">Lv.27</span>
+            <span class="chat-message">this build is insane 🔥</span>
+          </div>
+        </div>
+        <span class="tier-label">TIER 2</span>
+      </div>
+
+      <div class="chat-entry tier-2">
+        <div class="chat-avatar" style="background:linear-gradient(135deg,#9333ea,#db2777);">V</div>
+        <div class="chat-body">
+          <div class="chat-meta">
+            <span class="chat-nick">vortex_king</span>
+            <span class="chat-level">Lv.25</span>
+            <span class="chat-message">WORLD RECORD pace 🏆</span>
+          </div>
+        </div>
+        <span class="tier-label">TIER 2</span>
+      </div>
+
+      <div class="section-label">— Tier 3 · Level 30-34 · Amber-Orange —</div>
+
+      <!-- TIER 3: Gold-orange with sparkles -->
+      <div class="chat-entry tier-3">
+        <div class="chat-avatar" style="background:linear-gradient(135deg,#f59e0b,#f97316);">G</div>
+        <div class="chat-body">
+          <div class="chat-meta">
+            <span class="chat-nick">golden_ace</span>
+            <span class="chat-level">Lv.32</span>
+            <span class="chat-message">take my gift 🎁🎁🎁</span>
+          </div>
+        </div>
+        <span class="star-deco">⭐</span>
+        <span class="tier-label">TIER 3</span>
+        <span class="sparkle-particle" style="left:15%;bottom:20%;background:#fbbf24;--tx:-12px;--ty:-18px;animation-delay:0s;"></span>
+        <span class="sparkle-particle" style="left:50%;bottom:30%;background:#f97316;--tx:8px;--ty:-22px;animation-delay:0.6s;"></span>
+        <span class="sparkle-particle" style="left:80%;bottom:15%;background:#fcd34d;--tx:-6px;--ty:-16px;animation-delay:1.2s;"></span>
+      </div>
+
+      <div class="chat-entry tier-3">
+        <div class="chat-avatar" style="background:linear-gradient(135deg,#d97706,#ea580c);">F</div>
+        <div class="chat-body">
+          <div class="chat-meta">
+            <span class="chat-nick">flame_master</span>
+            <span class="chat-level">Lv.30</span>
+            <span class="chat-message">subbed for 6 months straight 🔥</span>
+          </div>
+        </div>
+        <span class="star-deco">⭐</span>
+        <span class="tier-label">TIER 3</span>
+        <span class="sparkle-particle" style="left:20%;bottom:25%;background:#fbbf24;--tx:10px;--ty:-20px;animation-delay:0.3s;"></span>
+        <span class="sparkle-particle" style="left:65%;bottom:18%;background:#f97316;--tx:-8px;--ty:-15px;animation-delay:0.9s;"></span>
+        <span class="sparkle-particle" style="left:90%;bottom:28%;background:#fcd34d;--tx:5px;--ty:-24px;animation-delay:1.5s;"></span>
+      </div>
+
+      <div class="section-label">— Tier 4 · Level 35+ · Rainbow Elite —</div>
+
+      <!-- TIER 4: Rainbow maximum flash -->
+      <div class="chat-entry tier-4">
+        <div class="chat-avatar" style="background:linear-gradient(135deg,#ff0080,#ffdd00,#00ff7f);">D</div>
+        <div class="chat-body">
+          <div class="chat-meta">
+            <span class="chat-nick">diamond_whale</span>
+            <span class="chat-level">Lv.42</span>
+            <span class="chat-message">GG EZ CLAP 🐋🐋🐋</span>
+          </div>
+        </div>
+        <span class="crown-deco">👑</span>
+        <span class="tier-label">ELITE</span>
+        <span class="sparkle-particle" style="left:10%;bottom:20%;background:#ff0080;--tx:-15px;--ty:-25px;animation-delay:0s;"></span>
+        <span class="sparkle-particle" style="left:30%;bottom:15%;background:#ffdd00;--tx:12px;--ty:-30px;animation-delay:0.3s;"></span>
+        <span class="sparkle-particle" style="left:55%;bottom:25%;background:#00ff7f;--tx:-8px;--ty:-20px;animation-delay:0.6s;"></span>
+        <span class="sparkle-particle" style="left:75%;bottom:10%;background:#00bfff;--tx:10px;--ty:-28px;animation-delay:0.9s;"></span>
+        <span class="sparkle-particle" style="left:92%;bottom:22%;background:#ff69b4;--tx:-12px;--ty:-22px;animation-delay:1.2s;"></span>
+      </div>
+
+      <div class="chat-entry tier-4">
+        <div class="chat-avatar" style="background:linear-gradient(135deg,#e040fb,#ff4081,#ffc107);">L</div>
+        <div class="chat-body">
+          <div class="chat-meta">
+            <span class="chat-nick">legend_slayer</span>
+            <span class="chat-level">Lv.55</span>
+            <span class="chat-message">100 GIFTS INCOMING 🚀🚀🚀</span>
+          </div>
+        </div>
+        <span class="crown-deco">👑</span>
+        <span class="tier-label">ELITE</span>
+        <span class="sparkle-particle" style="left:8%;bottom:18%;background:#ff0080;--tx:-18px;--ty:-28px;animation-delay:0.1s;"></span>
+        <span class="sparkle-particle" style="left:25%;bottom:25%;background:#ffdd00;--tx:14px;--ty:-32px;animation-delay:0.4s;"></span>
+        <span class="sparkle-particle" style="left:45%;bottom:12%;background:#00ff7f;--tx:-10px;--ty:-24px;animation-delay:0.7s;"></span>
+        <span class="sparkle-particle" style="left:68%;bottom:28%;background:#00bfff;--tx:8px;--ty:-26px;animation-delay:1.0s;"></span>
+        <span class="sparkle-particle" style="left:88%;bottom:15%;background:#ff69b4;--tx:-14px;--ty:-20px;animation-delay:1.3s;"></span>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Tier Legend -->
+  <div class="tier-legend">
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#06b6d4;"></div>
+      Tier 1 · Lv.20-24
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:linear-gradient(135deg,#a855f7,#ec4899);"></div>
+      Tier 2 · Lv.25-29
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:linear-gradient(135deg,#f59e0b,#f97316);"></div>
+      Tier 3 · Lv.30-34
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:linear-gradient(135deg,#ff0080,#ffdd00);"></div>
+      Tier 4 · Lv.35+
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

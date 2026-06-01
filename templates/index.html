@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TikTok to Minecraft Integrator</title>
+<link rel="stylesheet" href="/static/style.css?v=19">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+<div class="app-container">
+
+<!-- ===== SIDEBAR ===== -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon"><i class="fa-brands fa-tiktok"></i></div>
+    <span class="logo-text">TikTokMC</span>
+  </div>
+  <div class="nav-section">
+    <a class="nav-item active" data-panel="dashboard" onclick="switchPanel('dashboard')">
+      <i class="fa-solid fa-chart-simple"></i><span class="nav-label">Dashboard</span>
+    </a>
+    <a class="nav-item" data-panel="settings" onclick="switchPanel('settings')">
+      <i class="fa-solid fa-gear"></i><span class="nav-label">Settings</span>
+    </a>
+    <a class="nav-item" data-panel="events" onclick="switchPanel('events')">
+      <i class="fa-solid fa-bolt"></i><span class="nav-label">Events</span>
+    </a>
+    <a class="nav-item" data-panel="gifts" onclick="switchPanel('gifts')">
+      <i class="fa-solid fa-gift"></i><span class="nav-label">Gifts</span>
+    </a>
+    <a class="nav-item" data-panel="overlays" onclick="switchPanel('overlays')">
+      <i class="fa-solid fa-tv"></i><span class="nav-label">Overlays</span>
+    </a>
+    <a class="nav-item" data-panel="song" onclick="switchPanel('song')">
+      <i class="fa-solid fa-music"></i><span class="nav-label">Song</span>
+    </a>
+    <a class="nav-item" data-panel="tts" onclick="switchPanel('tts')">
+      <i class="fa-solid fa-volume-high"></i><span class="nav-label">TTS</span>
+    </a>
+  </div>
+</aside>
+
+<!-- ===== MAIN ===== -->
+<main class="main-content">
+  <!-- Top Bar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="stream-status">
+        <div class="status-dot" id="status-dot"></div>
+        <span class="status-label" id="status-text">Offline</span>
+      </div>
+      <div class="stream-duration" id="stream-timer">--:--:--</div>
+    </div>
+    <div class="topbar-center">
+      <i class="fa-solid fa-user"></i>
+      <span class="tiktok-uname" id="tiktok-handle-display">@loading...</span>
+    </div>
+    <div class="topbar-right">
+      <select class="profile-select" id="active-profile-select"></select>
+      <button class="btn btn-ghost btn-sm" id="btn-manage-profiles" title="Manage Profiles"><i class="fa-solid fa-gear"></i></button>
+      <button class="btn btn-primary" onclick="toggleBot()" id="btn-toggle">
+        <i class="fa-solid fa-play"></i> Start Bot
+      </button>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="content-scroll">
+
+    <!-- ===== DASHBOARD PANEL ===== -->
+    <div class="panel active" id="panel-dashboard">
+      <!-- Metrics -->
+      <div class="metrics-row">
+        <div class="metric-card accent-cyan">
+          <div class="metric-label">Live Viewers</div>
+          <div class="metric-value" id="metric-viewers">0</div>
+          <div class="metric-sub">Current watching</div>
+        </div>
+        <div class="metric-card accent-green">
+          <div class="metric-label">Total Viewers</div>
+          <div class="metric-value" id="metric-total">0</div>
+          <div class="metric-sub">All-time unique</div>
+        </div>
+        <div class="metric-card accent-amber">
+          <div class="metric-label">Gifts Today</div>
+          <div class="metric-value" id="metric-gifts">0</div>
+          <div class="metric-sub">Stream session</div>
+        </div>
+        <div class="metric-card accent-pink">
+          <div class="metric-label">New Follows</div>
+          <div class="metric-value" id="metric-follows">0</div>
+          <div class="metric-sub">This stream</div>
+        </div>
+        <div class="metric-card accent-gold">
+          <div class="metric-label">Total Coins</div>
+          <div class="metric-value" id="metric-coins">0</div>
+          <div class="metric-sub" id="metric-usd">≈ $0.00 USD</div>
+        </div>
+      </div>
+
+      <!-- Active Streaks -->
+      <div class="active-streaks-section" id="active-streaks-section" style="display:none;">
+        <div class="streaks-header">
+          <i class="fa-solid fa-fire"></i> Active Streaks
+        </div>
+        <div class="streaks-container" id="active-streaks-container">
+        </div>
+      </div>
+
+      <!-- Two-column: Ticker + Console -->
+      <div class="two-col">
+        <div class="event-ticker">
+          <div class="ticker-header">
+            <h3><i class="fa-solid fa-comments"></i> Recent Chat</h3>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="badge" id="ticker-count">0</span>
+              <button class="btn btn-ghost btn-sm" onclick="clearChatLog()">Clear</button>
+            </div>
+          </div>
+          <!-- ── Chat Log Search ── -->
+          <div class="ticker-search">
+            <i class="fa-solid fa-magnifying-glass ticker-search-icon"></i>
+            <input type="text" id="chat-search" class="ticker-search-input" placeholder="Search chat..." oninput="filterChatLog()">
+            <button class="ticker-search-clear" id="chat-search-clear" onclick="clearChatSearch()" title="Clear search" style="display:none;"><i class="fa-solid fa-xmark"></i></button>
+          </div>
+          <!-- ── Chat Category Filter ── -->
+          <div class="chat-cat-filter" id="chat-cat-filter">
+            <button class="chat-cat-pill" data-cat="vip" onclick="toggleChatCategory('vip')">👑 VIP</button>
+            <button class="chat-cat-pill" data-cat="superfan" onclick="toggleChatCategory('superfan')">⭐ SuperFan</button>
+            <button class="chat-cat-pill" data-cat="member" onclick="toggleChatCategory('member')">🎖️ Member</button>
+            <button class="chat-cat-pill" data-cat="friend" onclick="toggleChatCategory('friend')">🤝 Friend</button>
+            <button class="chat-cat-pill" data-cat="follower" onclick="toggleChatCategory('follower')">👤 Follower</button>
+            <button class="chat-cat-pill" data-cat="newbie" onclick="toggleChatCategory('newbie')">🆕 Newbie</button>
+            <button class="chat-cat-pill chat-cat-clear" onclick="clearChatCategories()" title="Show all">✕ All</button>
+            <span class="chat-filter-sep">|</span>
+            <label class="chat-level-filter">Min Gifter Lv <input type="number" id="chat-min-gifter-level" min="0" max="50" value="0" onchange="filterChatLog()" oninput="filterChatLog()"></label>
+            <label class="chat-level-filter">Min Member Lv <input type="number" id="chat-min-member-level" min="0" max="50" value="0" onchange="filterChatLog()" oninput="filterChatLog()"></label>
+          </div>
+          <div class="ticker-body" id="chat-log-container">
+            <div class="ticker-empty">No chat messages yet...</div>
+          </div>
+        </div>
+
+        <div class="console-panel">
+          <div class="console-header">
+            <h3><i class="fa-solid fa-terminal"></i> Console</h3>
+            <button class="btn btn-ghost btn-sm" onclick="clearConsole()">Clear</button>
+          </div>
+          <div class="console-body" id="terminal-window">
+            Waiting for bot to start...
+          </div>
+        </div>
+      </div>
+
+      <!-- Gift Log + Follow Log -->
+      <div class="two-col">
+        <div class="event-ticker" style="height: auto; max-height: 350px;">
+          <div class="ticker-header">
+            <h3><i class="fa-solid fa-gifts"></i> Recent Gifts</h3>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="badge" id="gift-count">0</span>
+              <button class="btn btn-ghost btn-sm" onclick="clearGiftLog()">Clear</button>
+            </div>
+          </div>
+          <!-- ── Gift Log Search ── -->
+          <div class="ticker-search">
+            <i class="fa-solid fa-magnifying-glass ticker-search-icon"></i>
+            <input type="text" id="gift-search" class="ticker-search-input" placeholder="Search gifts..." oninput="filterGiftLog()">
+            <button class="ticker-search-clear" id="gift-search-clear" onclick="clearGiftSearch()" title="Clear search" style="display:none;"><i class="fa-solid fa-xmark"></i></button>
+            <button class="ticker-sort-btn" id="gift-sort-btn" onclick="toggleGiftSort()" title="Sort by price" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:4px 8px;margin-left:4px;border-radius:4px;">
+              <i class="fa-solid fa-arrow-down-wide-short"></i>
+            </button>
+          </div>
+          <div class="ticker-body" id="gift-log-container">
+            <div class="ticker-empty">No gifts received yet...</div>
+          </div>
+        </div>
+
+        <div class="event-ticker" style="height: auto; max-height: 350px;">
+          <div class="ticker-header">
+            <h3><i class="fa-solid fa-user-plus"></i> Recent Follows</h3>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="badge" id="follow-count">0</span>
+              <button class="btn btn-ghost btn-sm" onclick="clearFollowLog()">Clear</button>
+            </div>
+          </div>
+          <div class="ticker-body" id="follow-log-container">
+            <div class="ticker-empty">No new followers yet...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== SETTINGS PANEL ===== -->
+    <div class="panel" id="panel-settings">
+      <div class="section-header">
+        <h2><i class="fa-solid fa-gear"></i> Settings</h2>
+        <button class="btn btn-primary" id="btn-save-settings"><i class="fa-solid fa-save"></i> Save Config</button>
+      </div>
+      <div class="form-grid-2">
+        <div class="form-card">
+          <h3><i class="fa-brands fa-tiktok"></i> TikTok Config</h3>
+          <div class="form-group">
+            <label>TikTok Username</label>
+            <input type="text" id="tiktok-username" placeholder="@username">
+          </div>
+          <div class="form-group">
+            <label>Minecraft Username</label>
+            <input type="text" id="mc-username" placeholder="PlayerName">
+          </div>
+          <div class="form-group">
+            <label>Euler API Key</label>
+            <input type="password" id="euler-api-key" placeholder="API Key">
+          </div>
+        </div>
+        <div class="form-card">
+          <h3><i class="fa-solid fa-server"></i> RCON Config</h3>
+          <div class="form-group">
+            <label>Host</label>
+            <input type="text" id="rcon-host" placeholder="127.0.0.1">
+          </div>
+          <div class="form-group">
+            <label>Port</label>
+            <input type="number" id="rcon-port" placeholder="25575">
+          </div>
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="rcon-password" placeholder="Password">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== EVENTS PANEL ===== -->
+    <div class="panel" id="panel-events">
+      <div class="section-header">
+        <h2><i class="fa-solid fa-bolt"></i> Events & Milestones</h2>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-primary btn-sm" id="btn-add-event"><i class="fa-solid fa-plus"></i> Add Event</button>
+          <button class="btn btn-primary" id="btn-save-events"><i class="fa-solid fa-save"></i> Save Events</button>
+        </div>
+      </div>
+
+      <div class="events-grid" id="events-container">
+        <!-- Populated by JS: event cards sorted by priority -->
+      </div>
+    </div>
+
+    <!-- ===== GIFTS PANEL ===== -->
+    <div class="panel" id="panel-gifts">
+      <div class="section-header">
+        <h2><i class="fa-solid fa-gift"></i> Gifts & Commands</h2>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-primary btn-sm" id="btn-add-gift"><i class="fa-solid fa-plus"></i> Add Gift</button>
+          <button class="btn btn-primary" id="btn-save-gifts"><i class="fa-solid fa-save"></i> Save Gifts</button>
+        </div>
+      </div>
+
+      <div class="form-card">
+        <h3><i class="fa-solid fa-fire" style="color:var(--warning)"></i> Streak Delta Gifts</h3>
+        <div class="form-hint">Gifts that calculate streak deltas instead of full repeat counts.</div>
+        <div class="chip-row" id="streak-delta-selected">
+          <span class="streak-delta-empty">No streak delta gifts selected. Search and pick below.</span>
+        </div>
+        <div class="form-group">
+          <input type="text" id="streak-delta-search" placeholder="Search gifts by name or ID..." autocomplete="off">
+          <div id="streak-delta-dropdown" style="display:none; position:absolute; background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:var(--radius-md); padding:10px; max-height:240px; overflow-y:auto; z-index:100; margin-top:4px; width:100%; max-width:400px; box-shadow:var(--shadow-elevated);"></div>
+        </div>
+      </div>
+
+      <!-- Global Gift Actions -->
+      <div class="form-card">
+        <h3><i class="fa-solid fa-earth-americas"></i> Global Gift Actions</h3>
+        <div class="form-hint">These actions run on EVERY gift received. Variables: {gift_name}, {repeat_count}, {user}, {total_coin}, {mc}</div>
+        <div id="global-actions-gift" class="event-actions-container"></div>
+        <div style="margin-top:6px; display:flex; gap:4px; flex-wrap:wrap;">
+          <button class="btn btn-ghost btn-sm" onclick="addEventActionRow('gift','minecraft','global-actions')"><i class="fa-solid fa-terminal"></i> Minecraft</button>
+          <button class="btn btn-ghost btn-sm" onclick="addEventActionRow('gift','sound','global-actions')"><i class="fa-solid fa-volume-high"></i> Sound</button>
+          <button class="btn btn-ghost btn-sm" onclick="addEventActionRow('gift','webhook','global-actions')"><i class="fa-solid fa-link"></i> Webhook</button>
+          <button class="btn btn-ghost btn-sm" onclick="addEventActionRow('gift','random','global-actions')"><i class="fa-solid fa-shuffle"></i> Random</button>
+        </div>
+      </div>
+
+      <div class="gifts-grid" id="gifts-container">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+
+        <!-- ===== OVERLAYS PANEL ===== -->
+    <div class="panel" id="panel-overlays">
+      <div class="section-header">
+        <h2><i class="fa-solid fa-tv"></i> OBS Overlays</h2>
+        <span class="form-hint" style="font-size:13px;">Configure filters, copy URL, add as Browser Source in OBS</span>
+      </div>
+
+      <!-- Chat Overlay -->
+      <div class="overlay-section">
+        <div class="overlay-section-header">
+          <div class="overlay-section-title">
+            <div class="overlay-icon" style="background:linear-gradient(135deg,#5865f2,#7289da);"><i class="fa-solid fa-comments"></i></div>
+            <div><h3>Chat Log Overlay</h3><p class="form-hint">Live chat with tier badges &amp; effects</p></div>
+          </div>
+          <div class="overlay-url-bar">
+            <input type="text" class="overlay-url-input" id="overlay-url-chat" readonly>
+            <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('chat')"><i class="fa-solid fa-copy"></i> Copy URL</button>
+          </div>
+        </div>
+        <div class="overlay-section-body">
+          <div class="overlay-filters">
+            <div class="filter-group">
+              <label class="filter-label">Categories</label>
+              <div class="filter-pills" id="chat-filter-categories">
+                <button class="filter-pill active" data-val="vip" onclick="toggleFilterPill(this)">VIP</button>
+                <button class="filter-pill active" data-val="superfan" onclick="toggleFilterPill(this)">SuperFan</button>
+                <button class="filter-pill active" data-val="member" onclick="toggleFilterPill(this)">Member</button>
+                <button class="filter-pill active" data-val="friend" onclick="toggleFilterPill(this)">Friend</button>
+                <button class="filter-pill active" data-val="follower" onclick="toggleFilterPill(this)">Follower</button>
+                <button class="filter-pill active" data-val="newbie" onclick="toggleFilterPill(this)">Newbie</button>
+              </div>
+              <div class="filter-hint">Toggle to filter. All active = show everything.</div>
+            </div>
+            <div class="filter-row">
+              <div class="filter-group"><label class="filter-label">Min Gifter Lv</label><input type="number" class="filter-input" id="chat-min-gifter" value="0" min="0" max="50" oninput="updateOverlayUrl('chat')"></div>
+              <div class="filter-group"><label class="filter-label">Min Member Lv</label><input type="number" class="filter-input" id="chat-min-member" value="0" min="0" max="50" oninput="updateOverlayUrl('chat')"></div>
+            </div>
+          </div>
+          <div class="overlay-preview-frame"><div class="preview-label">LIVE PREVIEW</div><iframe id="preview-chat" class="overlay-iframe"></iframe></div>
+          <div class="overlay-size-hint">Recommended OBS size: <strong>600 x 800</strong></div>
+        </div>
+      </div>
+
+      <!-- Gift Overlay -->
+      <div class="overlay-section">
+        <div class="overlay-section-header">
+          <div class="overlay-section-title">
+            <div class="overlay-icon" style="background:linear-gradient(135deg,#f0b232,#f59e0b);"><i class="fa-solid fa-gift"></i></div>
+            <div><h3>Gift Feed Overlay</h3><p class="form-hint">Live gift ticker with coin values</p></div>
+          </div>
+          <div class="overlay-url-bar">
+            <input type="text" class="overlay-url-input" id="overlay-url-gifts" readonly>
+            <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('gifts')"><i class="fa-solid fa-copy"></i> Copy URL</button>
+          </div>
+        </div>
+        <div class="overlay-section-body">
+          <div class="overlay-filters">
+            <div class="filter-row">
+              <div class="filter-group" style="flex:2;"><label class="filter-label">Search</label><input type="text" class="filter-input" id="gift-search-filter" placeholder="Filter by sender or gift..." oninput="updateOverlayUrl('gifts')"></div>
+              <div class="filter-group"><label class="filter-label">Min Coins</label><input type="number" class="filter-input" id="gift-min-coins" value="0" min="0" placeholder="0" oninput="updateOverlayUrl('gifts')"></div>
+              <div class="filter-group"><label class="filter-label">Sort</label><select class="filter-input" id="gift-sort" onchange="updateOverlayUrl('gifts')"><option value="none">Default</option><option value="high">Highest coins</option><option value="low">Lowest coins</option></select></div>
+            </div>
+          </div>
+          <div class="overlay-preview-frame"><div class="preview-label">LIVE PREVIEW</div><iframe id="preview-gifts" class="overlay-iframe"></iframe></div>
+          <div class="overlay-size-hint">Recommended OBS size: <strong>360 x 800</strong></div>
+        </div>
+      </div>
+
+      <!-- Follow Overlay -->
+      <div class="overlay-section">
+        <div class="overlay-section-header">
+          <div class="overlay-section-title">
+            <div class="overlay-icon" style="background:linear-gradient(135deg,#00f2ea,#00d4c8);"><i class="fa-solid fa-user-plus"></i></div>
+            <div><h3>Follow Alerts Overlay</h3><p class="form-hint">New follower notifications</p></div>
+          </div>
+          <div class="overlay-url-bar">
+            <input type="text" class="overlay-url-input" id="overlay-url-follows" readonly>
+            <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('follows')"><i class="fa-solid fa-copy"></i> Copy URL</button>
+          </div>
+        </div>
+        <div class="overlay-section-body">
+          <div class="overlay-preview-frame"><div class="preview-label">LIVE PREVIEW</div><iframe id="preview-follows" class="overlay-iframe"></iframe></div>
+          <div class="overlay-size-hint">Recommended OBS size: <strong>360 x 800</strong></div>
+        </div>
+      </div>
+
+      <!-- SuperFan Overlay -->
+      <div class="overlay-section overlay-section-featured">
+        <div class="overlay-section-header">
+          <div class="overlay-section-title">
+            <div class="overlay-icon" style="background:linear-gradient(135deg,#ff004f,#fbbf24,#00f2ea);"><i class="fa-solid fa-crown"></i></div>
+            <div><h3>SuperFan Alert Overlay</h3><p class="form-hint">Full-screen flashy superfan announcement</p></div>
+          </div>
+          <div class="overlay-url-bar">
+            <input type="text" class="overlay-url-input" id="overlay-url-superfan" readonly>
+            <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('superfan')"><i class="fa-solid fa-copy"></i> Copy URL</button>
+          </div>
+        </div>
+        <div class="overlay-section-body">
+          <div class="overlay-preview-frame overlay-preview-sf"><div class="preview-label">LIVE PREVIEW</div><iframe id="preview-superfan" class="overlay-iframe"></iframe></div>
+          <div class="overlay-size-hint">Recommended OBS size: <strong>1920 x 1080</strong> (full screen)</div>
+        </div>
+      </div>
+
+      <!-- Top Gift Overlay -->
+      <div class="overlay-section overlay-section-featured">
+        <div class="overlay-section-header">
+          <div class="overlay-section-title">
+            <div class="overlay-icon" style="background:linear-gradient(135deg,#ff004f,#fbbf24);"><i class="fa-solid fa-trophy"></i></div>
+            <div><h3>Top Gift Overlay</h3><p class="form-hint">Compact corner card showing the highest value single gift</p></div>
+          </div>
+          <div class="overlay-url-bar">
+            <input type="text" class="overlay-url-input" id="overlay-url-topgift" readonly>
+            <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('topgift')"><i class="fa-solid fa-copy"></i> Copy URL</button>
+            <button class="btn btn-danger btn-sm" onclick="resetTopGiftOverlay()" title="Reset top gift display"><i class="fa-solid fa-rotate-left"></i> Reset</button>
+          </div>
+        </div>
+        <div class="overlay-section-body">
+          <div class="overlay-preview-frame"><div class="preview-label">LIVE PREVIEW</div><iframe id="preview-topgift" class="overlay-iframe"></iframe></div>
+          <div class="overlay-size-hint">Recommended OBS size: <strong>400 x 200</strong> (corner card)</div>
+        </div>
+      </div>
+
+      <!-- Top Streak Overlay -->
+      <div class="overlay-section overlay-section-featured">
+        <div class="overlay-section-header">
+          <div class="overlay-section-title">
+            <div class="overlay-icon" style="background:linear-gradient(135deg,#fbbf24,#ff004f);"><i class="fa-solid fa-fire"></i></div>
+            <div><h3>Top Streak Overlay</h3><p class="form-hint">Compact corner card showing the longest gift combo streak</p></div>
+          </div>
+          <div class="overlay-url-bar">
+            <input type="text" class="overlay-url-input" id="overlay-url-topstreak" readonly>
+            <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('topstreak')"><i class="fa-solid fa-copy"></i> Copy URL</button>
+            <button class="btn btn-danger btn-sm" onclick="resetTopStreakOverlay()" title="Reset top streak display"><i class="fa-solid fa-rotate-left"></i> Reset</button>
+          </div>
+        </div>
+        <div class="overlay-section-body">
+          <div class="overlay-preview-frame"><div class="preview-label">LIVE PREVIEW</div><iframe id="preview-topstreak" class="overlay-iframe"></iframe></div>
+          <div class="overlay-size-hint">Recommended OBS size: <strong>400 x 200</strong> (corner card)</div>
+        </div>
+      </div>
+
+      <!-- Song Overlay -->
+      <div class="overlay-section overlay-section-featured">
+        <div class="overlay-section-header">
+          <div class="overlay-section-title">
+            <div class="overlay-icon" style="background:linear-gradient(135deg,#1DB954,#191414);"><i class="fa-solid fa-music"></i></div>
+            <div><h3>Song Request Overlay</h3><p class="form-hint">Compact card showing now playing &amp; next up</p></div>
+          </div>
+          <div class="overlay-url-bar">
+            <input type="text" class="overlay-url-input" id="overlay-url-song" readonly>
+            <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('song')"><i class="fa-solid fa-copy"></i> Copy URL</button>
+          </div>
+        </div>
+        <div class="overlay-section-body">
+          <div class="overlay-preview-frame"><div class="preview-label">LIVE PREVIEW</div><iframe id="preview-song" class="overlay-iframe"></iframe></div>
+          <div class="overlay-size-hint">Recommended OBS size: <strong>380 x 120</strong> (compact corner card)</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ===== SONG PANEL ===== -->
+    <div class="panel" id="panel-song">
+      <div class="song-page">
+        <div class="song-hero">
+          <div>
+            <div class="song-kicker"><i class="fa-brands fa-spotify"></i> Spotify song requests</div>
+            <h2>Song Requests</h2>
+            <p>Let viewers request tracks with chat commands. Keep permissions tight for skip, and use the OBS overlay at <code>/overlay/song</code>.</p>
+          </div>
+          <div class="song-hero-actions">
+            <div id="spotify-status-badge" class="song-status-pill">
+              <span class="status-dot" id="spotify-status-dot"></span>
+              <span id="spotify-status-text">Not Connected</span>
+            </div>
+            <span id="spotify-device-name" class="song-device-name"></span>
+            <button class="btn btn-primary" id="btn-spotify-connect"><i class="fa-solid fa-link"></i> Connect Spotify</button>
+            <button class="btn btn-danger" id="btn-spotify-disconnect" style="display:none;"><i class="fa-solid fa-unlink"></i> Disconnect</button>
+          </div>
+        </div>
+
+        <div id="spotify-credential-warning" class="song-warning" style="display:none;">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <span>Configure Spotify Client ID &amp; Secret below before connecting.</span>
+        </div>
+
+        <div class="song-layout">
+          <div class="song-main-column">
+            <section class="song-card song-card-accent">
+              <div class="song-card-header">
+                <div>
+                  <h3><i class="fa-solid fa-terminal"></i> Commands &amp; Spotify</h3>
+                  <p>Editable commands and Spotify developer credentials.</p>
+                </div>
+                <button class="btn btn-primary btn-sm" id="btn-save-song-config"><i class="fa-solid fa-save"></i> Save Config</button>
+              </div>
+
+              <div class="song-command-strip">
+                <div class="song-mini-field">
+                  <span>Play</span>
+                  <input type="text" id="song-play-cmd" value="!play" class="form-input">
+                </div>
+                <div class="song-mini-field">
+                  <span>Skip</span>
+                  <input type="text" id="song-skip-cmd" value="!skip" class="form-input">
+                </div>
+                <div class="song-mini-field">
+                  <span>Revoke</span>
+                  <input type="text" id="song-revoke-cmd" value="!revoke" class="form-input">
+                </div>
+              </div>
+
+              <div class="song-form-grid">
+                <div class="form-group">
+                  <label>Spotify Client ID</label>
+                  <input type="text" id="song-client-id" class="form-input" placeholder="From Spotify Developer Dashboard">
+                </div>
+                <div class="form-group">
+                  <label>Spotify Client Secret</label>
+                  <input type="password" id="song-client-secret" class="form-input" placeholder="From Spotify Developer Dashboard">
+                </div>
+                <div class="form-group song-span-2">
+                  <label>Redirect URI</label>
+                  <input type="text" id="song-redirect-uri" class="form-input" placeholder="http://localhost:5000/api/spotify/callback">
+                </div>
+              </div>
+
+              <div class="song-settings-row">
+                <label class="song-toggle"><input type="checkbox" id="song-enabled" checked><span>Enable requests</span></label>
+                <label class="song-toggle"><input type="checkbox" id="song-allow-explicit" checked><span>Allow explicit</span></label>
+                <div class="song-number-field">
+                  <label>Queue max</label>
+                  <input type="number" id="song-max-total" value="10" min="1" max="50" class="form-input">
+                </div>
+                <div class="song-number-field">
+                  <label>Per user</label>
+                  <input type="number" id="song-max-user" value="2" min="1" max="10" class="form-input">
+                </div>
+              </div>
+            </section>
+
+            <section class="song-card">
+              <div class="song-card-header">
+                <div>
+                  <h3><i class="fa-solid fa-list"></i> Queue</h3>
+                  <p>Pending requests from chat. Revoke/removal only works before Spotify receives the track.</p>
+                </div>
+                <button class="btn btn-danger btn-sm" onclick="clearSongQueue()"><i class="fa-solid fa-trash"></i> Clear Queue</button>
+              </div>
+              <div id="song-queue-container" class="song-list">
+                <div class="song-empty"><i class="fa-solid fa-music"></i><span>Queue is empty. Requested songs will appear here.</span></div>
+              </div>
+            </section>
+
+            <section class="song-card">
+              <div class="song-card-header">
+                <div>
+                  <h3><i class="fa-solid fa-flask"></i> Test Search</h3>
+                  <p>Search a track and queue it manually for testing.</p>
+                </div>
+              </div>
+              <div class="song-search-row">
+                <input type="text" id="song-test-search" placeholder="Search for a song..." class="form-input">
+                <button class="btn btn-primary" onclick="testSongSearch()"><i class="fa-solid fa-magnifying-glass"></i> Search</button>
+              </div>
+              <div id="song-test-results" class="song-list compact"></div>
+            </section>
+
+            <!-- Simulate Commands -->
+            <section class="song-card" style="margin-top:16px;">
+              <div class="song-card-header compact">
+                <div>
+                  <h3><i class="fa-solid fa-vial"></i> Simulate Commands</h3>
+                  <p>Test overlay feedback toasts. Username appears in every toast.</p>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px;">
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <label style="font-size:12px;color:var(--text-muted);white-space:nowrap;">Username:</label>
+                  <input type="text" id="sim-nick" value="testuser" placeholder="testuser" class="form-input" style="flex:1;">
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <label style="font-size:12px;color:var(--text-muted);white-space:nowrap;">Song query:</label>
+                  <input type="text" id="sim-query" value="never gonna give you up" placeholder="song name..." class="form-input" style="flex:1;">
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                  <button class="btn btn-primary" onclick="simPlay()" style="flex:1;">
+                    <i class="fa-solid fa-play"></i> Sim !play
+                  </button>
+                  <button class="btn btn-warning" onclick="simSkip()" style="flex:1;">
+                    <i class="fa-solid fa-forward-step"></i> Sim !skip
+                  </button>
+                  <button class="btn btn-danger" onclick="simPull()" style="flex:1;">
+                    <i class="fa-solid fa-arrow-rotate-left"></i> Sim !pull
+                  </button>
+                </div>
+                <div id="sim-status" style="font-size:11px;color:var(--text-muted);min-height:16px;"></div>
+              </div>
+            </section>
+          </div>
+
+          <aside class="song-side-column">
+            <section class="song-card">
+              <div class="song-card-header compact">
+                <div>
+                  <h3><i class="fa-solid fa-lock"></i> Permissions</h3>
+                  <p>Use TikTok unique IDs in whitelist.</p>
+                </div>
+              </div>
+
+              <div class="song-permission-block">
+                <div class="song-permission-title">!play can be used by</div>
+                <div class="song-check-grid">
+                  <label><input type="checkbox" id="play-perm-everyone" checked> Everyone</label>
+                  <label><input type="checkbox" id="play-perm-followers"> Followers</label>
+                  <label><input type="checkbox" id="play-perm-friends"> Friends</label>
+                  <label><input type="checkbox" id="play-perm-superfans"> SuperFans</label>
+                  <label><input type="checkbox" id="play-perm-members"> Members</label>
+                  <label><input type="checkbox" id="play-perm-mods"> Moderators</label>
+                  <label><input type="checkbox" id="play-perm-vip"> VIP</label>
+                </div>
+                <label class="song-whitelist-label">Whitelist</label>
+                <textarea id="play-perm-whitelist" class="form-input song-whitelist" placeholder="ikhito"></textarea>
+              </div>
+
+              <div class="song-permission-block">
+                <div class="song-permission-title">!skip can be used by</div>
+                <div class="song-check-grid">
+                  <label><input type="checkbox" id="skip-perm-everyone"> Everyone</label>
+                  <label><input type="checkbox" id="skip-perm-followers"> Followers</label>
+                  <label><input type="checkbox" id="skip-perm-friends"> Friends</label>
+                  <label><input type="checkbox" id="skip-perm-superfans"> SuperFans</label>
+                  <label><input type="checkbox" id="skip-perm-members"> Members</label>
+                  <label><input type="checkbox" id="skip-perm-mods" checked> Moderators</label>
+                  <label><input type="checkbox" id="skip-perm-vip" checked> VIP</label>
+                </div>
+                <label class="song-whitelist-label">Whitelist</label>
+                <textarea id="skip-perm-whitelist" class="form-input song-whitelist" placeholder="ikhito"></textarea>
+              </div>
+            </section>
+
+            <section class="song-card">
+              <div class="song-card-header compact">
+                <div>
+                  <h3><i class="fa-solid fa-clock-rotate-left"></i> History</h3>
+                  <p>Recently played requests.</p>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="clearSongHistory()"><i class="fa-solid fa-trash"></i></button>
+              </div>
+              <div id="song-history-container" class="song-list compact">
+                <div class="song-empty small"><span>No history yet.</span></div>
+              </div>
+            </section>
+          </aside>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== PANEL: TTS ===== -->
+    <div class="panel" id="panel-tts">
+      <div class="tts-page">
+        <div class="tts-hero">
+          <div class="tts-hero-info">
+            <div class="tts-kicker"><i class="fa-solid fa-volume-high"></i> Text-to-Speech</div>
+            <h2>Viewer TTS</h2>
+            <p>Let viewers trigger speech with a chat command prefix. Uses Microsoft Edge neural voices — free, no API key.</p>
+          </div>
+          <div class="tts-hero-actions">
+            <label class="song-toggle" style="margin:0;"><input type="checkbox" id="tts-enabled" checked onchange="saveTtsConfig()"><span>Enable TTS</span></label>
+          </div>
+        </div>
+
+        <div class="tts-layout">
+          <!-- Main Column -->
+          <div class="tts-main-column">
+            <section class="song-card">
+              <div class="song-card-header">
+                <h3><i class="fa-solid fa-sliders"></i> Settings</h3>
+                <button class="btn btn-primary btn-sm" onclick="saveTtsConfig()"><i class="fa-solid fa-save"></i> Save</button>
+              </div>
+              <div class="song-form-grid">
+                <div class="form-group">
+                  <label>Command Prefix</label>
+                  <input type="text" id="tts-command" value="." class="form-input" onchange="saveTtsConfig()">
+                  <span class="form-hint">Chat messages starting with this trigger TTS (e.g. .hello)</span>
+                </div>
+                <div class="form-group">
+                  <label>Voice</label>
+                  <select id="tts-voice" class="form-input" onchange="saveTtsConfig()"><option>Loading voices...</option></select>
+                </div>
+                <div class="form-group">
+                  <label>Speed: <span id="tts-speed-val">+0%</span></label>
+                  <input type="range" id="tts-speed" min="-50" max="100" value="0" step="5" oninput="document.getElementById('tts-speed-val').textContent=(this.value>0?'+':'')+this.value+'%';saveTtsConfig()">
+                </div>
+                <div class="form-group">
+                  <label>Pitch: <span id="tts-pitch-val">+0Hz</span></label>
+                  <input type="range" id="tts-pitch" min="-20" max="20" value="0" step="1" oninput="document.getElementById('tts-pitch-val').textContent=(this.value>0?'+':'')+this.value+'Hz';saveTtsConfig()">
+                </div>
+              </div>
+              <div class="song-settings-row" style="margin-top:16px;">
+                <div class="song-number-field">
+                  <label>Max Length (chars)</label>
+                  <input type="number" id="tts-max-length" value="200" min="10" max="500" class="form-input" onchange="saveTtsConfig()">
+                </div>
+                <div class="song-number-field">
+                  <label>Global Cooldown (s)</label>
+                  <input type="number" id="tts-global-cd" value="2" min="0" max="30" step="0.5" class="form-input" onchange="saveTtsConfig()">
+                </div>
+                <div class="song-number-field">
+                  <label>Per-User Cooldown (s)</label>
+                  <input type="number" id="tts-user-cd" value="10" min="0" max="120" class="form-input" onchange="saveTtsConfig()">
+                </div>
+              </div>
+            </section>
+
+            <section class="song-card" style="margin-top:16px;">
+              <div class="song-card-header compact">
+                <div>
+                  <h3><i class="fa-solid fa-microphone"></i> Test</h3>
+                  <p>Type text and press Enter to test the current voice.</p>
+                </div>
+              </div>
+              <div class="song-search-row">
+                <input type="text" id="tts-test-input" placeholder="Type something to speak..." class="form-input" onkeydown="if(event.key==='Enter')testTts()">
+                <button class="btn btn-primary btn-sm" onclick="testTts()"><i class="fa-solid fa-play"></i> Speak</button>
+              </div>
+            </section>
+
+            <section class="song-card" style="margin-top:16px;">
+              <div class="song-card-header compact">
+                <div>
+                  <h3><i class="fa-solid fa-wand-magic-sparkles"></i> Voice Effects</h3>
+                  <p>Viewers can add tags before text to change how TTS sounds.</p>
+                </div>
+              </div>
+              <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;">
+                <div style="flex:1;min-width:140px;padding:12px;background:var(--bg-secondary,rgba(255,255,255,.04));border-radius:8px;border:1px solid var(--border,rgba(255,255,255,.08));">
+                  <div style="font-weight:600;font-size:14px;margin-bottom:4px;">? Whisper</div>
+                  <code style="font-size:12px;opacity:.8;">. *whisper* hello</code>
+                  <div style="font-size:11px;opacity:.5;margin-top:4px;">Soft, slow, filtered</div>
+                </div>
+                <div style="flex:1;min-width:140px;padding:12px;background:var(--bg-secondary,rgba(255,255,255,.04));border-radius:8px;border:1px solid var(--border,rgba(255,255,255,.08));">
+                  <div style="font-weight:600;font-size:14px;margin-bottom:4px;">? Yell</div>
+                  <code style="font-size:12px;opacity:.8;">. [yell] come here</code>
+                  <div style="font-size:11px;opacity:.5;margin-top:4px;">Loud, fast, compressed</div>
+                </div>
+              </div>
+              <div style="margin-top:10px;font-size:11px;opacity:.5;">
+                Tags: <code>*whisper*</code> <code>[whisper]</code> <code>*whisp*</code> <code>[yell]</code> <code>[shout]</code> <code>{scream}</code> <code>[loud]</code> <code>[quiet]</code>
+              </div>
+            </section>
+          </div>
+
+          <!-- Side Column: Permissions + History -->
+          <aside class="song-side-column">
+            <section class="song-card">
+              <div class="song-card-header compact">
+                <h3><i class="fa-solid fa-lock"></i> Permissions</h3>
+              </div>
+              <div class="song-permission-block">
+                <label class="song-toggle"><input type="checkbox" id="tts-perm-everyone" checked onchange="saveTtsConfig()"><span>Everyone</span></label>
+                <label class="song-toggle"><input type="checkbox" id="tts-perm-followers" onchange="saveTtsConfig()"><span>Followers</span></label>
+                <label class="song-toggle"><input type="checkbox" id="tts-perm-friends" onchange="saveTtsConfig()"><span>Friends</span></label>
+                <label class="song-toggle"><input type="checkbox" id="tts-perm-superfans" onchange="saveTtsConfig()"><span>SuperFans</span></label>
+                <label class="song-toggle"><input type="checkbox" id="tts-perm-members" onchange="saveTtsConfig()"><span>Members</span></label>
+                <label class="song-toggle"><input type="checkbox" id="tts-perm-vip" onchange="saveTtsConfig()"><span>VIP</span></label>
+                <label class="song-toggle"><input type="checkbox" id="tts-perm-mods" onchange="saveTtsConfig()"><span>Moderators</span></label>
+              </div>
+              <div class="form-group" style="margin-top:12px;">
+                <label>Member Min. Level</label>
+                <input type="number" id="tts-member-min" value="0" min="0" max="999" class="form-input" onchange="saveTtsConfig()">
+                <span class="form-hint">Only members at or above this level can use TTS</span>
+              </div>
+              <div class="form-group" style="margin-top:12px;">
+                <label>Whitelist (one @username per line)</label>
+                <textarea id="tts-whitelist" rows="4" class="form-input" placeholder="@viewer1&#10;@viewer2" onchange="saveTtsConfig()" style="width:100%;resize:vertical;"></textarea>
+                <span class="form-hint">Whitelisted users bypass all permission checks</span>
+              </div>
+            </section>
+
+            <!-- TTS History -->
+            <section class="song-card" style="margin-top:16px;">
+              <div class="song-card-header compact">
+                <div>
+                  <h3><i class="fa-solid fa-clock-rotate-left"></i> History</h3>
+                  <p>Recent TTS usage</p>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="clearTtsHistory()"><i class="fa-solid fa-trash"></i> Clear</button>
+              </div>
+              <div id="tts-history-list" class="tts-history-list">
+                <div class="tts-history-empty">No TTS history yet</div>
+              </div>
+            </section>
+          </aside>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+</div>
+
+<!-- ===== TOAST CONTAINER ===== -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- ===== GIFT MODAL ===== -->
+<div class="modal-overlay" id="gift-modal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3 id="modal-title">Add / Edit Gift</h3>
+      <button class="modal-close" onclick="closeGiftModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group" id="available-gifts-group" style="display:none;">
+        <label>Pick a Gift <span style="font-size:11px;font-weight:400;opacity:0.7;">(Click to auto-fill)</span></label>
+        <input type="text" id="gift-search-input" placeholder="Search by gift name or ID..." style="margin-bottom:8px;" autocomplete="off">
+        <div id="available-gifts-list" class="available-gifts-list"></div>
+      </div>
+      <div class="form-group" id="gift-icon-group" style="display:none;">
+        <label>Gift Icon</label>
+        <div style="display:flex; align-items:center; gap:12px; padding:8px 0;">
+          <img id="gift-icon-preview" src="" alt="Gift icon" style="width:64px; height:64px; object-fit:contain; border-radius:8px; background:var(--bg-elevated); border:1px solid var(--border-default); padding:4px;">
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <button class="btn btn-ghost btn-sm" onclick="downloadGiftIconAsPng()" id="btn-download-icon" style="display:none;">
+              <i class="fa-solid fa-download"></i> Download PNG
+            </button>
+            <span class="form-hint" id="gift-icon-hint" style="margin:0;">No icon available</span>
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Gift ID <span style="font-size:11px;font-weight:400;opacity:0.7;">(TikTok Gift ID)</span></label>
+        <input type="text" id="modal-gift-id" placeholder="e.g. 5655">
+      </div>
+      <div class="form-group">
+        <label>Gift Name (Display Name)</label>
+        <input type="text" id="modal-gift-name" placeholder="e.g. rose">
+      </div>
+      <div class="form-group">
+        <label>Category / Coin Value</label>
+        <input type="text" id="modal-gift-category" placeholder="e.g. 1 Coin, 500 Coins, Custom">
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <textarea id="modal-gift-description" placeholder="Describe what this gift does, what commands it triggers, etc." style="width:100%;min-height:60px;resize:vertical;padding:8px;border-radius:6px;border:1px solid var(--border-default);background:var(--bg-input);color:var(--text-primary);font-size:13px;"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Actions</label>
+        <p class="form-hint">Each action runs in order. Variables: {user}, {mc}, {amount}, {amount*5}, {gift_name}, {total_coin}</p>
+        <div id="modal-actions-list"></div>
+        <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">
+          <button class="btn btn-ghost btn-sm" onclick="addActionRow('minecraft')"><i class="fa-solid fa-terminal"></i> Minecraft</button>
+          <button class="btn btn-ghost btn-sm" onclick="addActionRow('sound')"><i class="fa-solid fa-volume-high"></i> Sound</button>
+          <button class="btn btn-ghost btn-sm" onclick="addActionRow('webhook')"><i class="fa-solid fa-link"></i> Webhook</button>
+          <button class="btn btn-ghost btn-sm" onclick="addActionRow('random')"><i class="fa-solid fa-shuffle"></i> Random</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" id="btn-delete-gift" onclick="deleteGiftModal()">Delete</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost btn-sm" onclick="closeGiftModal()">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="saveGiftModal()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== ADD EVENT MODAL ===== -->
+<div class="modal-overlay" id="add-event-modal">
+  <div class="modal-box" style="max-width:620px;">
+    <div class="modal-header">
+      <h3><i class="fa-solid fa-bolt"></i> Add Event</h3>
+      <button class="modal-close" onclick="closeAddEventModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group" style="margin-bottom:16px;">
+        <input type="text" id="add-event-search" placeholder="Search events by name or description..." autocomplete="off" style="width:100%;padding:10px 14px 10px 38px;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%23545b70' viewBox='0 0 16 16'%3E%3Cpath d='M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:12px center;">
+      </div>
+      <div class="event-modal-tabs" id="add-event-tabs">
+        <!-- Category filter tabs populated by JS -->
+      </div>
+      <div id="add-event-list" style="max-height:300px;overflow-y:auto;">
+        <!-- Event list populated by JS -->
+      </div>
+      <!-- Action picker (shown after selecting an event) -->
+      <div id="add-event-action-picker" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--border-subtle);">
+        <h4 id="add-event-selected-name" style="font-size:14px;font-weight:700;margin-bottom:4px;"></h4>
+        <p id="add-event-selected-desc" class="form-hint" style="margin-bottom:8px;"></p>
+        <p id="add-event-selected-vars" class="form-hint" style="margin-bottom:12px;"></p>
+        <!-- Like-specific mode selector -->
+        <div id="add-event-like-config" style="display:none;margin-bottom:16px;">
+          <div class="form-group" style="margin-bottom:12px;">
+            <label>Like Mode</label>
+            <select id="add-event-like-mode" class="action-field" style="width:100%;padding:8px 12px;background:var(--bg-input);border:1px solid var(--border-default);border-radius:var(--radius-md);color:var(--text-primary);">
+              <option value="every_like">Every Like</option>
+              <option value="every_n">Every N Likes</option>
+            </select>
+          </div>
+          <div class="form-group" id="add-event-interval-group" style="display:none;">
+            <label>Interval (likes)</label>
+            <input type="number" id="add-event-like-interval" value="1000" min="1" style="width:100%;padding:8px 12px;background:var(--bg-input);border:1px solid var(--border-default);border-radius:var(--radius-md);color:var(--text-primary);">
+          </div>
+        </div>
+        <div id="add-event-modal-actions" class="event-actions-container"></div>
+        <div style="margin-top:6px; display:flex; gap:4px; flex-wrap:wrap;">
+          <button class="btn btn-ghost btn-sm" onclick="addAddEventAction('minecraft')"><i class="fa-solid fa-terminal"></i> Minecraft</button>
+          <button class="btn btn-ghost btn-sm" onclick="addAddEventAction('sound')"><i class="fa-solid fa-volume-high"></i> Sound</button>
+          <button class="btn btn-ghost btn-sm" onclick="addAddEventAction('webhook')"><i class="fa-solid fa-link"></i> Webhook</button>
+          <button class="btn btn-ghost btn-sm" onclick="addAddEventAction('random')"><i class="fa-solid fa-shuffle"></i> Random</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeAddEventModal()">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="btn-save-add-event" onclick="saveNewEvent()" disabled><i class="fa-solid fa-plus"></i> Add Event</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== EDIT EVENT MODAL ===== -->
+<div class="modal-overlay" id="edit-event-modal">
+  <div class="modal-box" style="max-width:520px;">
+    <div class="modal-header">
+      <h3 id="edit-event-modal-title">Edit Event</h3>
+      <button class="modal-close" onclick="closeEditEventModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="edit-event-info" style="margin-bottom:16px;">
+        <h4 id="edit-event-name" style="font-size:15px;font-weight:700;margin-bottom:4px;"></h4>
+        <p id="edit-event-desc" class="form-hint" style="margin-bottom:8px;"></p>
+        <p id="edit-event-vars" class="form-hint"></p>
+      </div>
+      <!-- Like-specific mode selector -->
+      <div id="edit-event-like-config" style="display:none;margin-bottom:16px;">
+        <div class="form-group" style="margin-bottom:12px;">
+          <label>Like Mode</label>
+          <select id="edit-event-like-mode" class="action-field" style="width:100%;padding:8px 12px;background:var(--bg-input);border:1px solid var(--border-default);border-radius:var(--radius-md);color:var(--text-primary);">
+            <option value="every_like">Every Like</option>
+            <option value="every_n">Every N Likes</option>
+          </select>
+        </div>
+        <div class="form-group" id="edit-event-interval-group" style="display:none;">
+          <label>Interval (likes)</label>
+          <input type="number" id="edit-event-like-interval" value="1000" min="1" style="width:100%;padding:8px 12px;background:var(--bg-input);border:1px solid var(--border-default);border-radius:var(--radius-md);color:var(--text-primary);">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Actions</label>
+        <div id="edit-event-modal-actions" class="event-actions-container"></div>
+        <div style="margin-top:6px; display:flex; gap:4px; flex-wrap:wrap;">
+          <button class="btn btn-ghost btn-sm" onclick="addEditEventAction('minecraft')"><i class="fa-solid fa-terminal"></i> Minecraft</button>
+          <button class="btn btn-ghost btn-sm" onclick="addEditEventAction('sound')"><i class="fa-solid fa-volume-high"></i> Sound</button>
+          <button class="btn btn-ghost btn-sm" onclick="addEditEventAction('webhook')"><i class="fa-solid fa-link"></i> Webhook</button>
+          <button class="btn btn-ghost btn-sm" onclick="addEditEventAction('random')"><i class="fa-solid fa-shuffle"></i> Random</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" id="btn-delete-event" onclick="deleteEditingEvent()"><i class="fa-solid fa-trash"></i> Delete</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost btn-sm" onclick="closeEditEventModal()">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="saveEditingEvent()"><i class="fa-solid fa-save"></i> Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== PROFILE MODAL ===== -->
+<div class="modal-overlay" id="profile-modal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>Manage Profiles</h3>
+      <button class="modal-close" onclick="closeProfileModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Create New Profile</label>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="new-profile-name" placeholder="e.g. Hardcore Server" style="flex:1;">
+          <button class="btn btn-ghost btn-sm" onclick="createProfile(false)">Empty</button>
+          <button class="btn btn-primary btn-sm" onclick="createProfile(true)">Duplicate Current</button>
+        </div>
+      </div>
+      <hr style="border-color:var(--border-default);margin:20px 0;">
+      <div class="form-group">
+        <label>Existing Profiles</label>
+        <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
+          <input type="file" id="import-profile-file" accept=".yml" style="display:none;" onchange="importProfile(event)">
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('import-profile-file').click()">
+            <i class="fa-solid fa-file-import"></i> Import Profile (.yml)
+          </button>
+        </div>
+        <div id="profile-list-container" style="max-height:200px;overflow-y:auto;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/script.js?v=19"></script>
+</body>
+</html>

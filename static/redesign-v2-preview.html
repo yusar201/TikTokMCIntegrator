@@ -1,0 +1,1195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TikTokMC — Streamer Command Center</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style>
+/* ========== TOKENS ========== */
+:root {
+  --bg-base: #0b0d14;
+  --bg-surface: #12151e;
+  --bg-elevated: #181c28;
+  --bg-hover: #1e2232;
+  --bg-input: #0f121a;
+  --border-default: #1e2535;
+  --border-subtle: #1a1f2e;
+  --border-active: #3b5ccc;
+  --text-primary: #edf0f7;
+  --text-secondary: #8b92a5;
+  --text-muted: #545b70;
+  --accent: #5865f2;
+  --accent-glow: rgba(88,101,242,0.25);
+  --success: #3ba55c;
+  --success-glow: rgba(59,165,92,0.25);
+  --warning: #f0b232;
+  --danger: #ed4245;
+  --danger-glow: rgba(237,66,69,0.2);
+  --tiktok-pink: #ff004f;
+  --tiktok-cyan: #00f2ea;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
+  --shadow-elevated: 0 8px 24px rgba(0,0,0,0.4);
+  --shadow-glow: 0 0 20px var(--accent-glow);
+  --transition: 0.2s cubic-bezier(0.4,0,0.2,1);
+  --font-heading: 'Outfit', 'Inter', sans-serif;
+  --font-body: 'Inter', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  overflow: hidden;
+  height: 100vh;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width:6px; height:6px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--border-default); border-radius:3px; }
+::-webkit-scrollbar-thumb:hover { background:var(--border-active); }
+
+/* ========== LAYOUT ========== */
+.app-container {
+  display: flex;
+  height: 100vh;
+}
+
+/* ── SIDEBAR ── */
+.sidebar {
+  width: 72px;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-default);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 0;
+  gap: 8px;
+  z-index: 20;
+  transition: width 0.25s ease;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.sidebar:hover {
+  width: 240px;
+}
+
+.sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px;
+  margin-bottom: 16px;
+  width: 100%;
+  flex-shrink: 0;
+}
+.sidebar-logo .logo-icon {
+  width: 32px; height: 32px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--tiktok-cyan), var(--tiktok-pink));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; color:#fff;
+  flex-shrink: 0;
+}
+.sidebar-logo .logo-text {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  font-size: 16px;
+  white-space: nowrap;
+  background: linear-gradient(135deg, var(--tiktok-cyan), var(--tiktok-pink));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.sidebar:hover .logo-text { opacity:1; }
+
+.nav-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 0 12px;
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: var(--transition);
+  cursor: pointer;
+  position: relative;
+}
+.nav-item i {
+  width: 20px; text-align: center;
+  font-size: 18px; flex-shrink: 0;
+}
+.nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.nav-item.active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: var(--shadow-glow);
+}
+.nav-label {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.sidebar:hover .nav-label { opacity:1; }
+
+/* ── MAIN CONTENT ── */
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── TOP BAR ── */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 28px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+  gap: 16px;
+}
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.stream-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  border-radius: 20px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+}
+.status-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  position: relative;
+}
+.status-dot.online {
+  background: var(--success);
+  box-shadow: 0 0 10px var(--success-glow);
+}
+.status-dot.online::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: var(--success);
+  opacity: 0.4;
+  animation: ping 2s ease-out infinite;
+}
+@keyframes ping {
+  75%, 100% { transform: scale(2.5); opacity: 0; }
+}
+.status-label {
+  font-size: 13px; font-weight: 600;
+}
+.stream-duration {
+  font-size: 13px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+.topbar-center {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+.topbar-center .tiktok-uname {
+  color: var(--tiktok-cyan);
+  font-weight: 600;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Buttons */
+.btn {
+  padding: 8px 20px;
+  border-radius: var(--radius-md);
+  font-size: 13px; font-weight: 600;
+  border: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 8px;
+  transition: var(--transition);
+  font-family: var(--font-body);
+  white-space: nowrap;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 8px var(--accent-glow);
+}
+.btn-primary:hover { background: #4752c4; box-shadow: 0 4px 16px var(--accent-glow); }
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+  box-shadow: 0 2px 8px var(--danger-glow);
+}
+.btn-danger:hover { background: #c03537; box-shadow: 0 4px 16px var(--danger-glow); }
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+}
+.btn-ghost:hover { background: var(--bg-hover); color: var(--text-primary); }
+.btn-sm { padding: 6px 14px; font-size: 12px; }
+.btn:disabled { opacity:0.5; cursor:not-allowed; }
+
+.profile-select {
+  padding: 7px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-body);
+  cursor: pointer;
+  outline: none;
+}
+.profile-select:hover { border-color: var(--border-active); }
+
+/* ── CONTENT AREA ── */
+.content-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 28px;
+}
+
+/* ── HERO METRICS ROW ── */
+.metrics-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.metric-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+  transition: var(--transition);
+  position: relative;
+  overflow: hidden;
+}
+.metric-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.metric-card:hover::before { opacity: 1; }
+.metric-card:hover { border-color: var(--border-active); }
+.metric-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+.metric-value {
+  font-family: var(--font-heading);
+  font-size: 2.5rem;
+  font-weight: 800;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.metric-card.accent-cyan .metric-value { color: var(--tiktok-cyan); }
+.metric-card.accent-green .metric-value { color: var(--success); }
+.metric-card.accent-amber .metric-value { color: var(--warning); }
+.metric-card.accent-pink .metric-value { color: var(--tiktok-pink); }
+.metric-sub {
+  font-size: 12px; color: var(--text-muted);
+  display: flex; align-items: center; gap: 6px;
+}
+.metric-sub .delta { color: var(--success); font-weight: 600; }
+
+/* ── TWO-COLUMN LAYOUT ── */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+/* ── LIVE EVENT TICKER ── */
+.event-ticker {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 340px;
+}
+.ticker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.ticker-header h3 {
+  font-family: var(--font-heading);
+  font-size: 15px; font-weight: 700;
+  display: flex; align-items: center; gap: 8px;
+}
+.ticker-header h3 i { color: var(--accent); }
+.ticker-header .badge {
+  font-size: 11px;
+  background: var(--accent);
+  color: #fff;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-weight: 600;
+}
+.ticker-body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+}
+.ticker-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 20px;
+  transition: background 0.15s;
+  animation: slideIn 0.3s ease-out;
+}
+@keyframes slideIn {
+  from { opacity:0; transform: translateX(-16px); }
+  to { opacity:1; transform: translateX(0); }
+}
+.ticker-entry:hover { background: var(--bg-hover); }
+.ticker-entry.gift { border-left: 3px solid var(--warning); }
+.ticker-entry.follow { border-left: 3px solid var(--tiktok-cyan); }
+.ticker-entry.comment { border-left: 3px solid var(--text-muted); }
+.ticker-avatar {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  font-size: 13px; font-weight: 700;
+  color: var(--accent);
+}
+.ticker-avatar img { width:100%; height:100%; border-radius:50%; object-fit:cover; }
+.ticker-info { flex:1; min-width:0; }
+.ticker-info .ticker-user { font-weight:600; font-size:13px; }
+.ticker-info .ticker-action {
+  font-size: 12px; color: var(--text-secondary);
+  margin-top: 2px;
+}
+.ticker-info .ticker-action strong { color: var(--warning); }
+.ticker-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.ticker-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ── CONSOLE ── */
+.console-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 340px;
+}
+.console-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.console-header h3 { font-family: var(--font-heading); font-size:15px; font-weight:700; display:flex; align-items:center; gap:8px; }
+.console-header h3 i { color: var(--success); }
+.console-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  background: #080b12;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.console-line {
+  display: flex;
+  gap: 10px;
+}
+.console-line .time {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.console-line .msg { color: #a8c0a0; }
+.console-line .msg.success { color: var(--success); }
+.console-line .msg.warning { color: var(--warning); }
+.console-line .msg.error { color: var(--danger); }
+.console-cursor {
+  display: inline-block;
+  width: 8px; height: 15px;
+  background: var(--success);
+  animation: blink 1s step-end infinite;
+}
+@keyframes blink { 50% { opacity:0; } }
+
+/* ── GIFT BOARD ── */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.section-header h2 {
+  font-family: var(--font-heading);
+  font-size: 18px; font-weight: 700;
+  display: flex; align-items: center; gap: 10px;
+}
+.section-header h2 i { color: var(--accent); }
+
+.gifts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.gift-category-block {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.gift-cat-header {
+  padding: 12px 16px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px; font-weight: 700;
+}
+.gift-cat-header .cat-coins {
+  font-size: 11px;
+  background: var(--accent);
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: #fff;
+  font-weight: 600;
+}
+.gift-cat-body {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+}
+.gift-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: var(--transition);
+}
+.gift-item:hover { background: var(--bg-hover); }
+.gift-item-icon {
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-elevated);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.gift-item-icon img { width:100%; height:100%; object-fit:contain; border-radius:4px; }
+.gift-item-name { font-size:13px; font-weight:600; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.gift-item-cmds { font-size:10px; color:var(--text-muted); }
+
+/* ── SETTINGS PANELS ── */
+.panel {
+  display: none;
+}
+.panel.active {
+  display: block;
+  animation: fadeSlide 0.3s ease;
+}
+@keyframes fadeSlide {
+  from { opacity:0; transform: translateY(8px); }
+  to { opacity:1; transform: translateY(0); }
+}
+
+.form-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  margin-bottom: 16px;
+}
+.form-card h3 {
+  font-family: var(--font-heading);
+  font-size: 15px; font-weight: 700;
+  margin-bottom: 20px;
+  display: flex; align-items: center; gap: 10px;
+}
+.form-card h3 i { color: var(--accent); }
+.form-group { margin-bottom: 18px; }
+.form-group label {
+  display: block;
+  font-size: 12px; font-weight: 600; color: var(--text-secondary);
+  margin-bottom: 6px;
+  text-transform: uppercase; letter-spacing: 0.3px;
+}
+.form-group input, .form-group textarea {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: var(--font-body);
+  outline: none;
+  transition: var(--transition);
+  resize: vertical;
+}
+.form-group input:focus, .form-group textarea:focus {
+  border-color: var(--border-active);
+  box-shadow: 0 0 0 3px rgba(88,101,242,0.15);
+}
+.form-hint {
+  font-size: 11px; color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* ── TOAST ── */
+.toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 100;
+}
+.toast {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px; font-weight: 600;
+  box-shadow: var(--shadow-elevated);
+  animation: toastIn 0.3s ease;
+  min-width: 260px;
+}
+@keyframes toastIn {
+  from { opacity:0; transform: translateX(50px); }
+  to { opacity:1; transform: translateX(0); }
+}
+.toast i { font-size: 16px; }
+.toast.gift-toast { border-left: 3px solid var(--warning); }
+.toast.follow-toast { border-left: 3px solid var(--tiktok-cyan); }
+
+/* ── MODAL ── */
+.modal-overlay {
+  display: none;
+  position: fixed; inset:0;
+  background: rgba(0,0,0,0.7);
+  z-index: 200;
+  align-items: center;
+  justify-content: center;
+}
+.modal-overlay.active { display: flex; }
+.modal-box {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  max-width: 520px;
+  width: 90%;
+  box-shadow: var(--shadow-elevated);
+  overflow: hidden;
+  animation: modalIn 0.2s ease;
+}
+@keyframes modalIn {
+  from { opacity:0; transform:scale(0.95) translateY(10px); }
+  to { opacity:1; transform:scale(1) translateY(0); }
+}
+.modal-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.modal-header h3 { font-size:16px; font-weight:700; }
+.modal-close {
+  background: none; border: none;
+  color: var(--text-secondary); cursor: pointer;
+  font-size: 18px; padding: 4px;
+  border-radius: 50%;
+}
+.modal-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+.modal-body { padding: 24px; }
+.modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex; justify-content: space-between; gap: 10px;
+}
+
+/* Streak delta chips */
+.chip-row {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-bottom: 12px; min-height: 36px;
+}
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  font-size: 12px; font-weight: 600;
+  transition: var(--transition);
+}
+.chip .chip-remove {
+  background: none; border: none;
+  color: var(--danger); cursor: pointer;
+  font-size: 13px;
+  padding: 0 2px;
+}
+.chip .chip-remove:hover { transform: scale(1.2); }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .metrics-row { grid-template-columns: repeat(2, 1fr); }
+  .two-col { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="app-container">
+
+<!-- ===== SIDEBAR ===== -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon"><i class="fa-brands fa-tiktok"></i></div>
+    <span class="logo-text">TikTokMC</span>
+  </div>
+  <div class="nav-section">
+    <a class="nav-item active" data-panel="dashboard" onclick="switchPanel('dashboard')">
+      <i class="fa-solid fa-chart-simple"></i><span class="nav-label">Dashboard</span>
+    </a>
+    <a class="nav-item" data-panel="settings" onclick="switchPanel('settings')">
+      <i class="fa-solid fa-gear"></i><span class="nav-label">Settings</span>
+    </a>
+    <a class="nav-item" data-panel="events" onclick="switchPanel('events')">
+      <i class="fa-solid fa-bolt"></i><span class="nav-label">Events</span>
+    </a>
+    <a class="nav-item" data-panel="gifts" onclick="switchPanel('gifts')">
+      <i class="fa-solid fa-gift"></i><span class="nav-label">Gifts</span>
+    </a>
+  </div>
+</aside>
+
+<!-- ===== MAIN ===== -->
+<main class="main-content">
+  <!-- Top Bar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="stream-status">
+        <div class="status-dot online" id="status-dot"></div>
+        <span class="status-label" id="status-text">Online</span>
+      </div>
+      <div class="stream-duration" id="stream-timer">00:00:00</div>
+    </div>
+    <div class="topbar-center">
+      <i class="fa-solid fa-user"></i>
+      <span class="tiktok-uname">@ikhito_mc</span>
+    </div>
+    <div class="topbar-right">
+      <select class="profile-select" id="profile-select">
+        <option>default</option>
+        <option>hardcore</option>
+        <option>events</option>
+      </select>
+      <button class="btn btn-primary" onclick="toggleBot()" id="btn-toggle">
+        <i class="fa-solid fa-play"></i> Start Bot
+      </button>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="content-scroll">
+
+    <!-- ===== DASHBOARD PANEL ===== -->
+    <div class="panel active" id="panel-dashboard">
+      <!-- Metrics -->
+      <div class="metrics-row">
+        <div class="metric-card accent-cyan">
+          <div class="metric-label">Live Viewers</div>
+          <div class="metric-value" id="metric-viewers">0</div>
+          <div class="metric-sub">Current watching</div>
+        </div>
+        <div class="metric-card accent-green">
+          <div class="metric-label">Total Viewers</div>
+          <div class="metric-value" id="metric-total">0</div>
+          <div class="metric-sub">All-time unique</div>
+        </div>
+        <div class="metric-card accent-amber">
+          <div class="metric-label">Gifts Today</div>
+          <div class="metric-value" id="metric-gifts">0</div>
+          <div class="metric-sub"><i class="fa-solid fa-arrow-up"></i> stream session</div>
+        </div>
+        <div class="metric-card accent-pink">
+          <div class="metric-label">New Follows</div>
+          <div class="metric-value" id="metric-follows">0</div>
+          <div class="metric-sub">This stream</div>
+        </div>
+      </div>
+
+      <!-- Two-column: Ticker + Console -->
+      <div class="two-col">
+        <!-- Event Ticker -->
+        <div class="event-ticker">
+          <div class="ticker-header">
+            <h3><i class="fa-solid fa-bolt"></i> Live Events</h3>
+            <span class="badge" id="ticker-count">0</span>
+          </div>
+          <div class="ticker-body" id="ticker-body">
+            <div class="ticker-empty">Waiting for events...</div>
+          </div>
+        </div>
+
+        <!-- Console -->
+        <div class="console-panel">
+          <div class="console-header">
+            <h3><i class="fa-solid fa-terminal"></i> Console</h3>
+            <button class="btn btn-ghost btn-sm" onclick="clearConsole()">Clear</button>
+          </div>
+          <div class="console-body" id="console-body">
+            <div class="console-line">
+              <span class="time">17:30:01</span>
+              <span class="msg">Bot initialized. Connecting to TikTok Live...</span>
+            </div>
+            <div class="console-line">
+              <span class="time">17:30:02</span>
+              <span class="msg success">Connected to @ikhito_mc</span>
+            </div>
+            <div class="console-line">
+              <span class="time">17:30:02</span>
+              <span class="msg">RCON connected to minecraft:25575</span>
+            </div>
+            <div class="console-line">
+              <span class="time">17:30:03</span>
+              <span class="msg success">Listening for events...</span>
+            </div>
+            <div class="console-line"><span class="time">&nbsp;</span><span class="console-cursor"></span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Gift Board Preview -->
+      <div class="section-header">
+        <h2><i class="fa-solid fa-gift"></i> Gift Mappings</h2>
+        <button class="btn btn-ghost btn-sm" onclick="switchPanel('gifts')">View All</button>
+      </div>
+      <div class="gifts-grid" id="gifts-grid-preview">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+
+    <!-- ===== SETTINGS PANEL ===== -->
+    <div class="panel" id="panel-settings">
+      <div class="form-grid-2">
+        <div class="form-card">
+          <h3><i class="fa-brands fa-tiktok"></i> TikTok Config</h3>
+          <div class="form-group">
+            <label>TikTok Username</label>
+            <input type="text" id="tiktok-username" placeholder="@username" value="@ikhito_mc">
+          </div>
+          <div class="form-group">
+            <label>Minecraft Username</label>
+            <input type="text" id="mc-username" placeholder="PlayerName" value="Ikhito">
+          </div>
+          <div class="form-group">
+            <label>Euler API Key</label>
+            <input type="password" id="euler-api-key" placeholder="API Key" value="••••••••">
+          </div>
+        </div>
+        <div class="form-card">
+          <h3><i class="fa-solid fa-server"></i> RCON Config</h3>
+          <div class="form-group">
+            <label>Host</label>
+            <input type="text" id="rcon-host" placeholder="127.0.0.1" value="127.0.0.1">
+          </div>
+          <div class="form-group">
+            <label>Port</label>
+            <input type="number" id="rcon-port" placeholder="25575" value="25575">
+          </div>
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="rcon-password" placeholder="Password" value="••••••••">
+          </div>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="toast('Settings saved', 'success')">
+        <i class="fa-solid fa-save"></i> Save Config
+      </button>
+    </div>
+
+    <!-- ===== EVENTS PANEL ===== -->
+    <div class="panel" id="panel-events">
+      <div class="form-grid-2">
+        <div class="form-card">
+          <h3><i class="fa-solid fa-user-plus"></i> New Follower</h3>
+          <div class="form-group">
+            <label>Commands</label>
+            <textarea rows="3">tntspawn {mc} 10 {user} Follow</textarea>
+          </div>
+        </div>
+        <div class="form-card">
+          <h3><i class="fa-solid fa-star"></i> SuperFan</h3>
+          <div class="form-group">
+            <label>Commands</label>
+            <textarea rows="3">subscribe {mc} {user}</textarea>
+          </div>
+        </div>
+        <div class="form-card">
+          <h3><i class="fa-solid fa-heart"></i> Likes Tier 1</h3>
+          <div class="form-group">
+            <label>Goal</label>
+            <input type="number" value="10000">
+          </div>
+          <div class="form-group">
+            <label>Commands</label>
+            <textarea rows="3"></textarea>
+          </div>
+        </div>
+        <div class="form-card">
+          <h3><i class="fa-solid fa-heart" style="color:var(--danger)"></i> Likes Tier 2</h3>
+          <div class="form-group">
+            <label>Goal</label>
+            <input type="number" value="500">
+          </div>
+          <div class="form-group">
+            <label>Commands</label>
+            <textarea rows="3"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-card">
+        <h3><i class="fa-solid fa-earth-americas"></i> Global Actions</h3>
+        <div class="form-hint">These run on EVERY event.</div>
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label>Every Gift</label>
+            <textarea rows="2">chatgift {gift_name} {repeat_count} {user} {total_coin} {mc}
+scoreboard players add Coins stats {total_coin}</textarea>
+          </div>
+          <div class="form-group">
+            <label>Every Comment</label>
+            <textarea rows="2">chatlog {tag} {user} {mc} {comment}</textarea>
+          </div>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="toast('Events saved', 'success')">
+        <i class="fa-solid fa-save"></i> Save Events
+      </button>
+    </div>
+
+    <!-- ===== GIFTS PANEL ===== -->
+    <div class="panel" id="panel-gifts">
+      <div class="form-card">
+        <h3><i class="fa-solid fa-fire" style="color:var(--warning)"></i> Streak Delta Gifts</h3>
+        <div class="form-hint">Gifts that calculate streak deltas — prevents double-counting on repeat updates.</div>
+        <div class="chip-row" id="streak-chips">
+          <span class="chip">Rose <span class="chip-remove">&times;</span></span>
+          <span class="chip">GG <span class="chip-remove">&times;</span></span>
+        </div>
+        <div class="form-group">
+          <input type="text" placeholder="Search gifts by name or ID..." style="width:100%">
+        </div>
+      </div>
+
+      <div class="section-header">
+        <h2><i class="fa-solid fa-gift"></i> All Gift Mappings</h2>
+        <button class="btn btn-primary btn-sm" onclick="toast('Add gift modal would open', 'gift')">
+          <i class="fa-solid fa-plus"></i> Add Gift
+        </button>
+      </div>
+      <div class="gifts-grid" id="gifts-grid-full">
+        <!-- Demo categories -->
+        <div class="gift-category-block">
+          <div class="gift-cat-header">1 Coin <span class="cat-coins">12</span></div>
+          <div class="gift-cat-body">
+            <div class="gift-item">
+              <div class="gift-item-icon"><i class="fa-solid fa-gift" style="color:var(--text-muted)"></i></div>
+              <span class="gift-item-name">Rose</span>
+              <span class="gift-item-cmds">2 cmds</span>
+            </div>
+            <div class="gift-item">
+              <div class="gift-item-icon"><i class="fa-solid fa-gift" style="color:var(--text-muted)"></i></div>
+              <span class="gift-item-name">TikTok</span>
+              <span class="gift-item-cmds">1 cmd</span>
+            </div>
+          </div>
+        </div>
+        <div class="gift-category-block">
+          <div class="gift-cat-header">100 Coins <span class="cat-coins">5</span></div>
+          <div class="gift-cat-body">
+            <div class="gift-item">
+              <div class="gift-item-icon"><i class="fa-solid fa-gem" style="color:var(--warning)"></i></div>
+              <span class="gift-item-name">Diamond</span>
+              <span class="gift-item-cmds">3 cmds</span>
+            </div>
+          </div>
+        </div>
+        <div class="gift-category-block">
+          <div class="gift-cat-header">1000 Coins <span class="cat-coins">3</span></div>
+          <div class="gift-cat-body">
+            <div class="gift-item">
+              <div class="gift-item-icon"><i class="fa-solid fa-crown" style="color:var(--warning)"></i></div>
+              <span class="gift-item-name">Lion</span>
+              <span class="gift-item-cmds">5 cmds</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+</div>
+
+<!-- ===== TOAST CONTAINER ===== -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- ===== GIFT MODAL (demo) ===== -->
+<div class="modal-overlay" id="gift-modal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>Edit Gift: Rose</h3>
+      <button class="modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group"><label>Gift ID</label><input type="text" value="5655"></div>
+      <div class="form-group"><label>Gift Name</label><input type="text" value="rose"></div>
+      <div class="form-group"><label>Category</label><input type="text" value="1 Coin"></div>
+      <div class="form-group"><label>Commands</label><textarea rows="4">summon tnt {user} ~ ~ ~</textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm">Delete</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm">Cancel</button>
+        <button class="btn btn-primary btn-sm">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== NAVIGATION =====
+function switchPanel(name) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const panel = document.getElementById('panel-' + name);
+  const nav = document.querySelector(`[data-panel="${name}"]`);
+  if (panel) panel.classList.add('active');
+  if (nav) nav.classList.add('active');
+}
+
+// ===== BOT TOGGLE =====
+let botRunning = false;
+function toggleBot() {
+  botRunning = !botRunning;
+  const btn = document.getElementById('btn-toggle');
+  const dot = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  if (botRunning) {
+    btn.innerHTML = '<i class="fa-solid fa-stop"></i> Stop Bot';
+    btn.className = 'btn btn-danger';
+    dot.className = 'status-dot online';
+    text.textContent = 'Streaming';
+    addConsoleLine('info', 'Bot started — connected to TikTok Live');
+    toast('Bot is now live!', 'gift');
+  } else {
+    btn.innerHTML = '<i class="fa-solid fa-play"></i> Start Bot';
+    btn.className = 'btn btn-primary';
+    dot.className = 'status-dot';
+    text.textContent = 'Offline';
+    addConsoleLine('info', 'Bot stopped.');
+    toast('Bot stopped', 'info');
+  }
+}
+
+// ===== CONSOLE =====
+function addConsoleLine(type, msg) {
+  const body = document.getElementById('console-body');
+  const now = new Date();
+  const time = now.toTimeString().slice(0,8);
+  const div = document.createElement('div');
+  div.className = 'console-line';
+  div.innerHTML = `<span class="time">${time}</span><span class="msg ${type}">${msg}</span>`;
+  // Insert before cursor
+  const cursor = body.querySelector('.console-cursor')?.parentElement;
+  if (cursor) {
+    body.insertBefore(div, cursor);
+  } else {
+    body.appendChild(div);
+  }
+  body.scrollTop = body.scrollHeight;
+}
+function clearConsole() {
+  document.getElementById('console-body').innerHTML = '';
+}
+
+// ===== LIVE TICKER =====
+let tickerCount = 0;
+function addTickerEntry(type, user, action, time) {
+  const body = document.getElementById('ticker-body');
+  const empty = body.querySelector('.ticker-empty');
+  if (empty) empty.remove();
+  tickerCount++;
+  document.getElementById('ticker-count').textContent = tickerCount;
+
+  const icon = type === 'gift' ? 'fa-gift' : type === 'follow' ? 'fa-user-plus' : 'fa-comment';
+  const div = document.createElement('div');
+  div.className = `ticker-entry ${type}`;
+  div.innerHTML = `
+    <div class="ticker-avatar"><i class="fa-solid ${icon}"></i></div>
+    <div class="ticker-info">
+      <div class="ticker-user">${user}</div>
+      <div class="ticker-action">${action}</div>
+    </div>
+    <span class="ticker-time">${time}</span>
+  `;
+  body.insertBefore(div, body.firstChild);
+  // Keep max 50 entries
+  while (body.children.length > 50) body.lastChild.remove();
+}
+
+// ===== TOAST =====
+function toast(msg, type) {
+  const container = document.getElementById('toast-container');
+  const iconMap = { gift: 'fa-gift', follow: 'fa-user-plus', success: 'fa-check', info: 'fa-info' };
+  const div = document.createElement('div');
+  div.className = `toast ${type}-toast`;
+  div.innerHTML = `<i class="fa-solid ${iconMap[type] || 'fa-info'}"></i> ${msg}`;
+  container.appendChild(div);
+  setTimeout(() => { div.style.opacity='0'; div.style.transition='opacity 0.3s';
+    setTimeout(() => div.remove(), 300); }, 3500);
+}
+
+// ===== DEMO SIMULATION =====
+function simulateEvents() {
+  const users = ['xX_DarkSlayer_Xx', 'MinecraftPro99', 'TikTokQueen', 'PixelArtist', 'CreeperFan'];
+  const gifts = [
+    {name:'Rose', coins:1}, {name:'GG', coins:1}, {name:'TikTok', coins:1},
+    {name:'Diamond', coins:100}, {name:'Lion', coins:1000}, {name:'Galaxy', coins:5000}
+  ];
+  let viewerCount = 47;
+
+  setInterval(() => {
+    const r = Math.random();
+    if (r < 0.5) {
+      // Gift
+      const g = gifts[Math.floor(Math.random()*gifts.length)];
+      const u = users[Math.floor(Math.random()*users.length)];
+      const time = new Date().toTimeString().slice(0,5);
+      addTickerEntry('gift', u, `sent <strong>${g.name}</strong> ×${Math.floor(Math.random()*3)+1} — ${g.coins} coins`, time);
+      toast(`${u} sent ${g.name}! 🔥`, 'gift');
+    } else if (r < 0.8) {
+      // Follow
+      const u = users[Math.floor(Math.random()*users.length)];
+      const time = new Date().toTimeString().slice(0,5);
+      addTickerEntry('follow', u, 'started following', time);
+      document.getElementById('metric-follows').textContent = parseInt(document.getElementById('metric-follows').textContent)+1;
+    } else {
+      // Comment
+      const u = users[Math.floor(Math.random()*users.length)];
+      const time = new Date().toTimeString().slice(0,5);
+      addTickerEntry('comment', u, 'commented: "Awesome stream! 🔥"', time);
+    }
+    document.getElementById('metric-gifts').textContent = parseInt(document.getElementById('metric-gifts').textContent)+1;
+
+    // Update viewers
+    viewerCount += Math.floor(Math.random()*7)-3;
+    viewerCount = Math.max(10, Math.min(200, viewerCount));
+    document.getElementById('metric-viewers').textContent = viewerCount;
+    document.getElementById('metric-total').textContent = parseInt(document.getElementById('metric-total').textContent)+Math.floor(Math.random()*2);
+  }, 4000);
+}
+
+// Start demo on load
+simulateEvents();
+
+// Timer
+setInterval(() => {
+  const el = document.getElementById('stream-timer');
+  if (!botRunning) { el.textContent = '--:--:--'; return; }
+  const parts = el.textContent.split(':').map(Number);
+  let s = parts[2]+1, m = parts[1], h = parts[0];
+  if (s >= 60) { s=0; m++; }
+  if (m >= 60) { m=0; h++; }
+  el.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}, 1000);
+</script>
+</body>
+</html>

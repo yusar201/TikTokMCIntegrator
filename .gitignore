@@ -1,0 +1,67 @@
+# Secrets — NEVER commit the real config
+config.yml
+
+# Runtime data files (contain real user data)
+chat_log.json
+gift_log.json
+follow_log.json
+viewer_stats.json
+song_queue.json
+song_history.json
+tts_history.json
+active_profile.txt
+available_gifts.json
+active_streaks.json
+stream_state.json
+
+# Spotify auth
+song_spotify_token.json
+
+# TTS/Song config (may contain keys)
+tts_config.json
+song_config.json
+
+# Build artifacts
+build/
+dist/
+release/
+*.spec
+__pycache__/
+*.pyc
+*.pyo
+*.exe
+
+# Backups (may contain old secrets)
+backups/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Hermes agent plans
+.hermes/
+.graphify_incremental.json
+graphify-out/
+
+# Python virtualenv
+venv/
+.venv/
+env/
+
+# Logs
+*.log
+logs/
+reports/
+superfan_log.json
+
+# Temp/scratch files
+2.24.0
+
+# Profile data
+profiles/
