@@ -5,12 +5,12 @@ import json
 import datetime
 
 from utils import load_json
-from constants import BASE_DIR
+import paths
 
 
 def load_stream_state():
     """Load stream state from file."""
-    state_file = os.path.join(BASE_DIR, "stream_state.json")
+    state_file = paths.data("stream_state.json")
     if os.path.exists(state_file):
         try:
             return load_json(state_file) or {}

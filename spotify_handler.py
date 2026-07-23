@@ -24,18 +24,18 @@ logger = logging.getLogger(__name__)
 
 import sys
 
-# Resolve BASE_DIR — works both as .py script and as packaged .exe
-# When imported from a frozen app, sys.executable is the exe path
-BASE_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) \
-           else os.path.dirname(os.path.abspath(__file__))
+# Centralized path layout (config/ data/ logs/ assets/) — single frozen-aware root.
+import paths
 
-TOKEN_FILE = os.path.join(BASE_DIR, "song_spotify_token.json")
-CONFIG_FILE = os.path.join(BASE_DIR, "song_config.json")
-QUEUE_FILE = os.path.join(BASE_DIR, "song_queue.json")
-HISTORY_FILE = os.path.join(BASE_DIR, "song_history.json")
-WORKER_LOG_FILE = os.path.join(BASE_DIR, "song_queue_worker.log")
-BLOCKED_URIS_FILE = os.path.join(BASE_DIR, "song_blocked_uris.json")
-FEEDBACK_FILE = os.path.join(BASE_DIR, "song_feedback.json")
+BASE_DIR = paths.BASE_DIR
+
+TOKEN_FILE = paths.data("song_spotify_token.json")
+CONFIG_FILE = paths.data("song_config.json")
+QUEUE_FILE = paths.data("song_queue.json")
+HISTORY_FILE = paths.data("song_history.json")
+WORKER_LOG_FILE = paths.logs("song_queue_worker.log")
+BLOCKED_URIS_FILE = paths.data("song_blocked_uris.json")
+FEEDBACK_FILE = paths.data("song_feedback.json")
 
 SPOTIFY_API_BASE = "https://api.spotify.com/v1"
 # Thread lock for file writes
@@ -289,6 +289,20 @@ def get_valid_token():
             )
             if resp.status_code != 200:
                 logger.warning(f"Token refresh failed: {resp.status_code} {resp.text}")
+                # invalid_grant = refresh token is expired/revoked (Spotify's 6-month
+                # expiry, July 2026). DISCARD it and stop retrying — the user must
+                # sign in again via the dashboard's "Connect Spotify" button.
+                is_invalid_grant = False
+                try:
+                    is_invalid_grant = resp.json().get("error") == "invalid_grant"
+                except ValueError:
+                    is_invalid_grant = "invalid_grant" in resp.text
+                if is_invalid_grant:
+                    logger.warning("Refresh token expired/revoked (invalid_grant). "
+                                   "Discarding token — user must reconnect Spotify.")
+                    clear_token()
+                    _token_refresh_until = 0  # no cooldown; token is gone, nothing to retry
+                    return None
                 # Hit rate limit? Respect Retry-After from Spotify
                 if resp.status_code == 429:
                     retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
@@ -392,6 +406,26 @@ _token_refresh_until = 0  # epoch timestamp — skip token refresh attempts unti
 _token_refresh_lock = threading.Lock()  # prevents concurrent refresh
 _TOKEN_REFRESH_COOLDOWN = 60  # seconds between token refresh attempts
 
+# Per-endpoint throttle (smoothing) — prevents burst patterns that trigger 429.
+# Worker now polls every 5s, so without this we'd hit /me/player ~12x/min plus
+# UI status polls, easy to burst into Spotify's rate limit. 500ms min interval
+# per endpoint smooths it out. Different endpoints throttle independently.
+_endpoint_last_call = {}  # endpoint -> last_call_epoch
+_endpoint_throttle_lock = threading.Lock()
+_ENDPOINT_MIN_INTERVAL = 0.5  # 500ms between same-endpoint calls
+
+
+def _throttle_endpoint(endpoint):
+    """Block until min interval has passed since last call to this endpoint.
+    Returns nothing. Max wait is 1s. No-op on the first call per endpoint."""
+    with _endpoint_throttle_lock:
+        last = _endpoint_last_call.get(endpoint, 0)
+        now = time.time()
+        wait = _ENDPOINT_MIN_INTERVAL - (now - last)
+        if wait > 0:
+            time.sleep(min(wait, 1.0))
+        _endpoint_last_call[endpoint] = time.time()
+
 
 def _parse_retry_after(header_value):
     """Parse Retry-After header: could be seconds (int) or HTTP-date (RFC 7231)."""
@@ -432,6 +466,8 @@ def _spotify_get(endpoint, params=None):
     if _rate_limited():
         remaining = int(_rate_limit_until - time.time())
         return {"error": f"Waiting for Spotify rate limit ({remaining}s left)."}
+    # Per-endpoint throttle — smooth burst patterns
+    _throttle_endpoint(endpoint)
     token = get_valid_token()
     if not token:
         return {"error": "Not connected to Spotify"}
@@ -470,6 +506,8 @@ def _spotify_post(endpoint, data=None):
     if _rate_limited():
         remaining = int(_rate_limit_until - time.time())
         return {"error": f"Waiting for Spotify rate limit ({remaining}s left)."}
+    # Per-endpoint throttle — smooth burst patterns
+    _throttle_endpoint(endpoint)
 
     token = get_valid_token()
     if not token:
@@ -482,6 +520,49 @@ def _spotify_post(endpoint, data=None):
         if data is not None:
             kwargs["json"] = data
         resp = req.post(
+            f"{SPOTIFY_API_BASE}{endpoint}",
+            **kwargs,
+        )
+        if resp.status_code in (200, 201, 202, 204):
+            return {"success": True}
+        if resp.status_code == 401:
+            return {"error": "Token invalid, please reconnect"}
+        if resp.status_code == 403:
+            return {"error": f"Spotify returned 403 (Premium required or no active device): {resp.text}"}
+        if resp.status_code == 404:
+            return {"error": f"Spotify returned 404 (No active device): {resp.text}"}
+        if resp.status_code == 429:
+            seconds = _parse_retry_after(resp.headers.get("Retry-After"))
+            _rate_limit_until = time.time() + seconds
+            return {"error": f"Spotify rate limited — retry in {int(_rate_limit_until - time.time())}s"}
+        return {"error": f"Spotify returned {resp.status_code}: {resp.text}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _spotify_put(endpoint, data=None):
+    """Make a PUT request to the Spotify API. (Added for play_track_immediate.)"""
+    import requests as req
+    global _rate_limit_until
+
+    # Skip if we're in rate-limit cooldown
+    if _rate_limited():
+        remaining = int(_rate_limit_until - time.time())
+        return {"error": f"Waiting for Spotify rate limit ({remaining}s left)."}
+    # Per-endpoint throttle — smooth burst patterns
+    _throttle_endpoint(endpoint)
+
+    token = get_valid_token()
+    if not token:
+        return {"error": "Not connected to Spotify"}
+    try:
+        kwargs = {
+            "headers": _spotify_headers(token),
+            "timeout": 10,
+        }
+        if data is not None:
+            kwargs["json"] = data
+        resp = req.put(
             f"{SPOTIFY_API_BASE}{endpoint}",
             **kwargs,
         )
@@ -533,23 +614,46 @@ def get_connection_status():
 # ── Playback state cache (avoid rate limiting) ─────────────────────────────
 
 _playback_cache = {"result": None, "cached_at": 0}
-_PLAYBACK_CACHE_TTL = 2  # seconds — fast pause/resume response while staying under Spotify rate limits
+_PLAYBACK_CACHE_TTL = 3  # seconds — snappy pause/resume while staying well under Spotify rate limits
+_playback_lock = threading.Lock()  # single-flight: collapse concurrent cache-misses into ONE real API call
+
+# Device list cache — devices rarely change mid-stream. Single-flight + TTL so
+# dashboard /devices polls and pre-play device checks don't hit /me/player/devices
+# raw (the last uncached hot-path GET → sporadic 429 source, fixed 2026-06-16).
+_devices_cache = {"result": None, "cached_at": 0}
+_DEVICES_CACHE_TTL = 30  # seconds — devices barely change; long TTL = near-zero real calls
+_devices_lock = threading.Lock()
 
 
 def _get_cached_playback():
-    """Get cached playback state, refreshing from Spotify if TTL expired."""
+    """Get cached playback state, refreshing from Spotify if TTL expired.
+
+    Single-flight: when the cache is stale and multiple threads (worker,
+    overlay poll, dashboard poll) all miss at once, only the FIRST thread
+    hits Spotify. The rest wait on the lock and reuse that fresh result.
+    Without this, a cache miss fans out into 2-3 simultaneous /me/player
+    calls, bursting against Spotify's rolling window and causing 429s.
+    """
     global _playback_cache
     now = time.time()
+    # Fast path — fresh cache, no lock needed
     if now - _playback_cache["cached_at"] < _PLAYBACK_CACHE_TTL:
-        return _playback_cache["result"]  # Return cached, even if None = no data yet
-    # Fresh fetch
-    result = _real_get_current_playback()
-    # Don't cache error responses — retry fresh next time
-    if isinstance(result, dict) and "error" in result:
-        _playback_cache = {"result": result, "cached_at": now - _PLAYBACK_CACHE_TTL - 1}  # Force retry immediately next cycle
+        return _playback_cache["result"]
+
+    with _playback_lock:
+        # Re-check inside the lock: a thread that was waiting may now find
+        # the cache was just refreshed by whoever held the lock first.
+        now = time.time()
+        if now - _playback_cache["cached_at"] < _PLAYBACK_CACHE_TTL:
+            return _playback_cache["result"]
+        # Fresh fetch (this thread is the single flight)
+        result = _real_get_current_playback()
+        # Don't cache error responses — retry fresh next time
+        if isinstance(result, dict) and "error" in result:
+            _playback_cache = {"result": result, "cached_at": now - _PLAYBACK_CACHE_TTL - 1}  # Force retry immediately next cycle
+            return result
+        _playback_cache = {"result": result, "cached_at": now}
         return result
-    _playback_cache = {"result": result, "cached_at": now}
-    return result
 
 
 def _real_get_current_playback():
@@ -580,8 +684,8 @@ def get_current_playback():
     return _get_cached_playback()
 
 
-def get_active_devices():
-    """Get list of available Spotify devices."""
+def _real_get_active_devices():
+    """Get device list from Spotify (always hits API)."""
     data = _spotify_get("/me/player/devices")
     if "error" in data:
         return data
@@ -596,6 +700,32 @@ def get_active_devices():
         }
         for d in devices
     ]
+
+
+def get_active_devices():
+    """Get list of available Spotify devices.
+
+    Single-flight + TTL cache (mirrors get_current_playback). Devices rarely
+    change mid-stream, so a 30s cache collapses dashboard /devices polls and
+    pre-play device checks into near-zero real /me/player/devices calls — this
+    was the last uncached hot-path GET causing sporadic 429s (fixed 2026-06-16).
+    Zero added latency: fresh cache returns instantly, never blocks user actions.
+    """
+    global _devices_cache
+    now = time.time()
+    # Fast path — fresh cache, no lock
+    if _devices_cache["result"] is not None and now - _devices_cache["cached_at"] < _DEVICES_CACHE_TTL:
+        return _devices_cache["result"]
+    with _devices_lock:
+        now = time.time()
+        if _devices_cache["result"] is not None and now - _devices_cache["cached_at"] < _DEVICES_CACHE_TTL:
+            return _devices_cache["result"]
+        result = _real_get_active_devices()
+        # Don't cache error responses — retry fresh next time
+        if isinstance(result, dict) and "error" in result:
+            return result
+        _devices_cache = {"result": result, "cached_at": now}
+        return result
 
 
 def search_track(query, limit=5):
@@ -631,12 +761,90 @@ def _simplify_track(track):
 
 
 def queue_track(uri):
-    """Queue a track to Spotify's active player."""
+    """Queue a track to Spotify's active player. (Legacy — use play_track_immediate.)"""
     return _spotify_post(f"/me/player/queue?uri={uri}")
 
 
+def play_track_immediate(uri):
+    """Play a track IMMEDIATELY, replacing the current context.
+
+    This is the correct way to start a song for our local-only queue architecture.
+    Spotify's PUT /me/player/play with `uris` and NO `context_uri` replaces the
+    entire playback context with just this track, so /me/player/next falls through
+    to the user's queue (and our local queue has no items anyway). It also
+    disables repeat so the new track doesn't auto-loop.
+
+    Returns success dict or error dict.
+    """
+    # Disable repeat so the new track doesn't auto-loop
+    _spotify_put("/me/player/repeat?state=off")
+    result = _spotify_put("/me/player/play", {
+        "uris": [uri],
+    })
+    # Invalidate the playback cache so the very next get_current_playback()
+    # reflects the track we just started — NOT the stale previous track.
+    # Without this, the worker's _sync_playback_state can see the old (loop)
+    # URI for up to _PLAYBACK_CACHE_TTL seconds and wrongly conclude our new
+    # "playing" song already ended, auto-skipping the next request on top of it.
+    _playback_cache["cached_at"] = 0
+    return result
+
+
+def play_next_from_queue():
+    """Play the next queued song from our LOCAL queue via play_track_immediate.
+
+    Used by the worker (song ended naturally) and the !skip handler. This is the
+    right way to advance — never push to Spotify's queue, always start the next
+    track explicitly with play_track_immediate. That way, !revoke is always
+    instant (just remove from local file) and we never have to "undo" what we
+    pushed to Spotify.
+
+    Returns True if a song was played, False if queue is empty or error.
+    """
+    queue = load_queue()
+    pos, entry = None, None
+    for i, q in enumerate(queue):
+        if q.get("status") == "queued":
+            pos, entry = i, q
+            break
+    if pos is None or entry is None:
+        return False
+
+    uri = entry.get("spotify_uri", "")
+    if not uri:
+        return False
+
+    result = play_track_immediate(uri)
+    if "error" in result:
+        _log_worker(f"play_next_from_queue failed: {result['error']}")
+        return False
+
+    # Mark previous "playing" as "played", mark new one as "playing"
+    queue = load_queue()
+    for q in queue:
+        if q.get("status") == "playing":
+            q["status"] = "played"
+            try:
+                add_to_history(dict(q))
+            except Exception:
+                pass
+        if q.get("spotify_uri") == uri and q.get("status") == "queued":
+            q["status"] = "playing"
+    save_queue(queue)
+
+    _log_worker(f"Playing next from queue: {entry.get('track_name')}")
+    return True
+
+
 def skip_track():
-    """Skip to next track."""
+    """Skip to next track.
+
+    For local-only architecture: skip_track() is just Spotify's /me/player/next.
+    Callers (worker, !skip handler) should call play_next_from_queue() AFTER
+    skip_track() to start the next song immediately (otherwise Spotify would
+    skip into silence until it reaches the next track in its own queue — and
+    we don't push to Spotify's queue anymore)."""
+    _spotify_put("/me/player/repeat?state=off")
     return _spotify_post("/me/player/next")
 
 
@@ -710,18 +918,23 @@ def add_to_queue(track, requested_by):
     return {"success": True, "entry": entry, "position": len(queue)}
 
 
-def remove_from_queue(position, requested_by):
-    """Remove a track from queue by position. Checks permissions."""
+def remove_from_queue(position, requested_by, allow_any=False):
+    """Remove a queued/pushed track by position.
+
+    Viewer pulls must match requested_by. Dashboard removals pass allow_any=True
+    because the dashboard X button is an operator/admin control, not a viewer
+    permission path. Currently playing songs are intentionally protected here;
+    use skip for the active track.
+    """
     queue = load_queue()
     if position < 0 or position >= len(queue):
         return {"error": "Invalid queue position"}
 
     entry = queue[position]
-    # Allow removal by the requestor or by anyone with skip permission
-    if entry.get("requested_by", "").lower() == requested_by.lower():
-        # Requestor can always revoke their own
-        pass
-    else:
+    if entry.get("status") not in ("queued", "pushed"):
+        return {"error": "Cannot remove the currently playing song. Use skip instead."}
+
+    if not allow_any and entry.get("requested_by", "").lower() != requested_by.lower():
         return {"error": "You can only remove your own requests."}
 
     removed = queue.pop(position)
@@ -872,10 +1085,10 @@ def _push_queued_songs(token, cfg, time_mod):
 
 
 def _sync_playback_state(queue, last_seen_uri):
-    """Sync Spotify playback state with our queue. Returns (queue, last_seen_uri, state_changed)."""
+    """Sync Spotify playback state with our queue. Returns (queue, last_seen_uri, state_changed, playback)."""
     playback = get_current_playback()
     if "error" in playback:
-        return queue, last_seen_uri, False
+        return queue, last_seen_uri, False, playback
 
     is_playing = playback.get("is_playing", False)
     current_item = playback.get("item")
@@ -885,15 +1098,18 @@ def _sync_playback_state(queue, last_seen_uri):
 
     # If something is currently playing, mark it in our queue
     if current_uri:
-        # Mark previous playing as played if it's a different track
-        for q in queue:
-            if q.get("status") == "playing" and q.get("spotify_uri") != current_uri:
-                q["status"] = "played"
-                state_changed = True
-                try:
-                    add_to_history(dict(q))
-                except Exception as hist_err:
-                    _log_worker(f"History add error: {hist_err}")
+        # NOTE: We intentionally do NOT mark a "playing" song as "played" just
+        # because Spotify reports a different current_uri on a single tick.
+        # In the local-only architecture, Spotify never advances to a different
+        # track on its own — a mismatch here is ALWAYS either (a) a stale 2s
+        # playback cache right after play_track_immediate(), or (b) the loop
+        # song. Acting on a single-tick mismatch caused the auto-skip bug:
+        # song A would be flipped to "played" off a stale loop-song reading,
+        # so the next !play B fell through the handler's "nothing playing
+        # locally" branch and replaced A instead of queuing behind it.
+        # Natural song-end is handled robustly elsewhere: the clean-204 branch
+        # below (current_uri=None) and the 3-tick idle counter in
+        # process_song_queue(). Those are the only authorities for "played".
 
         # Mark current track as playing if it's in our queue
         for i, entry in enumerate(queue):
@@ -913,7 +1129,7 @@ def _sync_playback_state(queue, last_seen_uri):
                 except Exception as hist_err:
                     _log_worker(f"History add error: {hist_err}")
 
-    return queue, current_uri, state_changed
+    return queue, current_uri, state_changed, playback
 
 
 def _auto_skip_blocked_uris(queue, current_uri):
@@ -945,15 +1161,46 @@ def _auto_skip_blocked_uris(queue, current_uri):
     return queue, True
 
 
+def _next_queue_poll_delay(is_playing, progress_ms, duration_ms,
+                           has_local_playing, has_queued):
+    """Return a rate-limit-safe delay that wakes just after the expected end.
+
+    Normal polling remains at five seconds.  We only shorten a single sleep
+    when a local song is actively playing, another song is waiting, and the
+    current track is less than five seconds from its reported end.
+    """
+    normal_delay = 5.0
+    if not (is_playing and has_local_playing and has_queued):
+        return normal_delay
+    if duration_ms <= 0 or progress_ms < 0 or progress_ms >= duration_ms:
+        return normal_delay
+    remaining_seconds = (duration_ms - progress_ms) / 1000.0
+    if remaining_seconds >= normal_delay:
+        return normal_delay
+    # Wake just after the boundary, avoiding an early stale playback sample.
+    return max(0.25, remaining_seconds + 0.2)
+
+
 def process_song_queue():
     """Background loop: continuously push queued songs to Spotify and sync playback state."""
     import time as time_mod
 
     last_seen_uri = None
+    consecutive_idle_ticks = 0  # Bug 6: track how long we've been in idle state
+    PLAYING_URI = ""  # Bug 6: track who the local "playing" song is
+    poll_delay = 5.0
 
     while _song_queue_running:
         try:
-            time_mod.sleep(30)
+            scheduled_end_probe = poll_delay < 5.0
+            time_mod.sleep(poll_delay)
+            poll_delay = 5.0
+
+            # An adaptive wake can occur inside the normal playback-cache TTL.
+            # Force exactly this boundary probe fresh; otherwise it could reuse
+            # the pre-end snapshot and buy no latency improvement.
+            if scheduled_end_probe:
+                _playback_cache["cached_at"] = 0
 
             token = get_valid_token()
             if not token:
@@ -963,24 +1210,124 @@ def process_song_queue():
             if not cfg.get("enabled", True):
                 continue
 
-            # Push any queued songs to Spotify
-            queue, pushed_any = _push_queued_songs(token, cfg, time_mod)
-            if pushed_any:
-                save_queue(queue)
+            # Load the current local queue
+            queue = load_queue()
 
             # Sync playback state
-            queue, last_seen_uri, state_changed = _sync_playback_state(queue, last_seen_uri)
+            queue, last_seen_uri, state_changed, playback = _sync_playback_state(queue, last_seen_uri)
             if state_changed:
                 save_queue(queue)
+                _log_worker(f"Worker sync: state changed, queue updated")
+                # If we just marked a song as played, advance the local queue
+                # by starting the next one with play_track_immediate. This is
+                # the local-only architecture: never push to Spotify's queue.
+                if any(q.get("status") == "queued" for q in queue):
+                    if not play_next_from_queue():
+                        _log_worker("Worker sync: no next song to play")
 
-            # Auto-skip blocked URIs (revoked songs already pushed to Spotify)
-            playback = get_current_playback()
-            if "error" not in playback:
-                current_item = playback.get("item")
-                current_uri = current_item.get("uri") if current_item else None
-                queue, skipped = _auto_skip_blocked_uris(queue, current_uri)
-                if skipped:
+            # Bug 6: detect stuck state — local queue has a "playing" song but
+            # Spotify's playback has been idle for many ticks. This happens when
+            # a user song ends naturally but Spotify is slow to return 204, so
+            # _sync_playback_state can't mark it as played. Without this, the
+            # next song never plays because we think the current one is still
+            # "playing".
+            # Reuse the playback dict from _sync_playback_state above — no
+            # second API call. (get_current_playback is cached, but reusing
+            # avoids even a cache lookup and guarantees both checks see the
+            # exact same snapshot within this tick.)
+            if "error" in playback:
+                continue
+            is_playing = playback.get("is_playing", False)
+            spotify_current_uri = (playback.get("item") or {}).get("uri")
+            progress_ms = playback.get("progress_ms", 0)
+            duration_ms = (playback.get("item") or {}).get("duration_ms", 0)
+
+            # Find local "playing" song (if any)
+            local_playing = next(
+                (q for q in queue if q.get("status") == "playing"),
+                None
+            )
+            local_playing_uri = local_playing.get("spotify_uri") if local_playing else ""
+            has_queued = any(q.get("status") == "queued" for q in queue)
+
+            # Keep the rate-limit-safe five-second cadence, but when Spotify's
+            # own position says this song will end sooner, wake once just after
+            # that boundary. This removes the random remainder of the poll
+            # interval without adding continuous API traffic.
+            poll_delay = _next_queue_poll_delay(
+                is_playing, progress_ms, duration_ms,
+                bool(local_playing), has_queued,
+            )
+
+            # Distinguish a USER PAUSE from a NATURAL SONG END.
+            # Both report is_playing=False, so position is the discriminator.
+            # A real user-pause is ALWAYS meaningfully into the song and frozen
+            # somewhere in the middle. A natural end looks different:
+            #   - Spotify returns 204 / clears the item (uri differs), OR
+            #   - the finished track is left loaded but progress is reset to ~0
+            #     (single track ended, repeat off, nothing else in context), OR
+            #   - progress sits at/near duration_ms.
+            # So we treat it as a USER PAUSE only when: paused, same track still
+            # loaded, progress is past MIN_PAUSE_PROGRESS_MS (not a reset-to-0
+            # natural end) AND not within END_GRACE_MS of the track end.
+            # Everything else advances to the next queued song as before.
+            END_GRACE_MS = 12000          # within 12s of the end = treat as ended
+            MIN_PAUSE_PROGRESS_MS = 5000  # must be >5s in to count as a real pause
+            same_track = bool(local_playing_uri) and spotify_current_uri == local_playing_uri
+            near_end = (
+                duration_ms > 0 and progress_ms > 0
+                and (duration_ms - progress_ms) <= END_GRACE_MS
+            )
+            paused_mid_song = (
+                (not is_playing)
+                and same_track
+                and progress_ms > MIN_PAUSE_PROGRESS_MS
+                and not near_end
+            )
+
+            # If local says one song is playing, but Spotify says nothing/other,
+            # and this has persisted across multiple ticks → mark local playing
+            # as played and start the next one via play_next_from_queue.
+            # BUT: never advance while the user is paused mid-song.
+            if local_playing and not paused_mid_song and (not is_playing or spotify_current_uri != local_playing_uri):
+                if PLAYING_URI == local_playing_uri and local_playing_uri:
+                    consecutive_idle_ticks += 1
+                else:
+                    PLAYING_URI = local_playing_uri
+                    consecutive_idle_ticks = 1
+                # How many idle ticks before we conclude the song ended and
+                # advance. near_end is an UNAMBIGUOUS end (progress sat at/near
+                # the track's full duration — impossible to confuse with a
+                # pause-at-start), so we fast-path it on the very next poll
+                # (1 tick, ~5s). The ambiguous case (track cleared or progress
+                # reset to ~0) keeps a short safety wait (2 ticks, ~10s) so we
+                # never misfire on a genuine mid-song pause.
+                required_ticks = 1 if (near_end or scheduled_end_probe) else 2
+                if consecutive_idle_ticks >= required_ticks:
+                    _log_worker(
+                        f"Worker: local playing '{local_playing_uri[:20]}...' "
+                        f"ended (near_end={near_end}, ticks={consecutive_idle_ticks}). "
+                        f"Advancing to next song."
+                    )
+                    local_playing["status"] = "played"
+                    try:
+                        add_to_history(dict(local_playing))
+                    except Exception:
+                        pass
                     save_queue(queue)
+                    consecutive_idle_ticks = 0
+                    PLAYING_URI = ""
+                    # Advance the local queue — start the next song now
+                    if not play_next_from_queue():
+                        # No next song → fall back to loop song
+                        loop_uri = cfg.get("loop_song_uri", "").strip()
+                        if loop_uri:
+                            _log_worker("Worker: no next in queue, resuming loop song")
+                            play_track_immediate(loop_uri)
+                    continue
+            else:
+                consecutive_idle_ticks = 0
+                PLAYING_URI = local_playing_uri
 
         except Exception as e:
             _log_worker(f"Worker error: {e}")

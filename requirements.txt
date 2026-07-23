@@ -1,5 +1,23 @@
+# TikTok Live + Minecraft integration
 TikTokLive==6.6.5
 mcrcon==0.3.3
-pygame>=2.5.0
 requests>=2.28.0
+PyYAML>=6.0
+
+# Dashboard and Windows desktop shell
+Flask>=3.1,<4
+waitress>=3.0
+pywebview>=5.0
+pystray>=0.19
+Pillow>=10.0
+
+# Streaming features
 spotipy>=2.24.0
+pygame>=2.5.0
+edge-tts>=6.1
+
+# Build
+pyinstaller>=6.0
+
+# Test suite
+pytest>=8.0

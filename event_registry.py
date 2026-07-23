@@ -455,9 +455,9 @@ EVENT_REGISTRY = {
     "SuperFanBoxEvent": _evt(
         SuperFanBoxEvent,
         "SuperFan Gift Box",
-        "Fires when someone gifts a superfan box/bundle to the stream.",
+        "Fires when someone gifts a superfan box/bundle to the stream. Sender-side only triggers actions; claim/open events are logged separately.",
         "subscription",
-        ["user", "mc", "amount"],
+        ["user", "mc", "amount", "box_phase", "envelope_id", "sender_id", "sender_name", "diamond_count", "people_count"],
         "high",
     ),
     "SuperFanJoinEvent": _evt(

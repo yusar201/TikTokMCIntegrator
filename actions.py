@@ -163,9 +163,9 @@ async def execute_actions(actions, context=None, send_mc_command=None):
 
     ctx = context or {}
 
-    for action in actions:
+    async def run_action(action):
         if not isinstance(action, dict):
-            continue
+            return
 
         action_type = action.get("type", "minecraft")
 
@@ -182,6 +182,10 @@ async def execute_actions(actions, context=None, send_mc_command=None):
                 print(f"[ACTIONS] unknown action type: {action_type}")
         except Exception as e:
             print(f"[ACTIONS] error executing {action_type}: {e}")
+
+    # Actions from one TikTok event are independent. Start them together so a
+    # multi-command gift does not wait for a fresh RCON round-trip per command.
+    await asyncio.gather(*(run_action(action) for action in actions))
 
 
 async def _execute_minecraft(action, ctx, send_mc_command):

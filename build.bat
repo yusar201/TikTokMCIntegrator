@@ -35,7 +35,7 @@ if exist "%RELEASE_DIR%\" (
     echo [1/4] Backing up release config...
     if exist "%BACKUP_DIR%\" rmdir /S /Q "%BACKUP_DIR%" >nul 2>&1
     mkdir "%BACKUP_DIR%" >nul 2>&1
-    
+
     if exist "%RELEASE_DIR%\config.yml" copy "%RELEASE_DIR%\config.yml" "%BACKUP_DIR%\config.yml" >nul
     if exist "%RELEASE_DIR%\profiles\" (
         mkdir "%BACKUP_DIR%\profiles" >nul 2>&1
@@ -70,6 +70,23 @@ if errorlevel 1 (
     )
 ) else (
     echo   OK - spotipy already installed
+)
+
+REM pywebview powers the native desktop window. Required for the build.
+%PY_CMD% -m pip show pywebview >nul 2>&1
+if errorlevel 1 (
+    echo   Installing pywebview...
+    %PY_CMD% -m pip install "pywebview>=5.0"
+    if errorlevel 1 (
+        echo.
+        echo   FAILED to install pywebview.
+        echo   Try this manually in CMD:
+        echo   %PY_CMD% -m pip install "pywebview>=5.0"
+        pause
+        exit /b 1
+    )
+) else (
+    echo   OK - pywebview already installed
 )
 
 REM ---- Step 3: Build ----

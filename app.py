@@ -10,7 +10,7 @@ import atexit
 import time as _time
 import asyncio as _asyncio
 import datetime
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, send_from_directory, abort
 from werkzeug.utils import secure_filename
 from event_registry import get_registry_for_api, get_registry_with_categories, get_event_categories
 from actions import migrate_to_events_redesign
@@ -19,10 +19,13 @@ from utils import load_json, save_json, safe_json_read
 from constants import *
 from routes.spotify import spotify_bp
 from routes.stats import stats_bp, init_stats_blueprint
+from routes.addons import addons_api_bp, addons_page_bp, init_addons_blueprint
+from addons.oneblock.runtime.objective_api import create_objective_rush_blueprint
+from addons.oneblock.runtime.objective_service import ObjectiveRushService
+import paths
 
-# Resolve base directory — works both as .py script and as packaged .exe
-BASE_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) \
-           else os.path.dirname(os.path.abspath(__file__))
+# Centralized folderized path layout (release/config, release/data, release/logs, release/assets)
+BASE_DIR = paths.BASE_DIR
 
 # Flask: when frozen, templates/static are extracted to sys._MEIPASS
 if getattr(sys, 'frozen', False):
@@ -35,18 +38,202 @@ else:
 # Register blueprints
 app.register_blueprint(spotify_bp, url_prefix='/api/spotify')
 app.register_blueprint(stats_bp, url_prefix='/api/stats')
+app.register_blueprint(addons_api_bp, url_prefix='/api/addons')
+app.register_blueprint(addons_page_bp)
 
-# Initialize stats blueprint with BASE_DIR
-init_stats_blueprint(BASE_DIR)
+objective_rush_service = ObjectiveRushService(
+    paths.addons("oneblock"),
+    paths.data("oneblock_objective_rush_state.json"),
+)
+app.register_blueprint(
+    create_objective_rush_blueprint(objective_rush_service),
+    url_prefix="/api/addons/oneblock/objective-rush",
+)
+objective_rush_service.start_poller()
+atexit.register(objective_rush_service.stop_poller)
 
-CONFIG_FILE = os.path.join(BASE_DIR, "config.yml")
-PROFILES_DIR = os.path.join(BASE_DIR, "profiles")
-ACTIVE_PROFILE_FILE = os.path.join(BASE_DIR, "active_profile.txt")
+# Initialize blueprints with runtime directories
+init_stats_blueprint(paths.DATA_DIR)
+init_addons_blueprint(paths.ADDONS_DIR)
+
+CONFIG_FILE = paths.config("config.yml")
+PROFILES_DIR = os.path.join(paths.CONFIG_DIR, "profiles")
+ACTIVE_PROFILE_FILE = paths.config("active_profile.txt")
 
 bot_process = None
 bot_logs = []
 _bot_logs_lock = threading.Lock()
 MAX_LOGS = 0  # 0 = unlimited
+_external_bot_scan_cache = {"ts": 0.0, "items": []}
+
+
+def _hidden_subprocess_kwargs():
+    """Hide Windows helper subprocesses used by status/stop polling."""
+    if os.name != 'nt':
+        return {}
+    kwargs = {"creationflags": getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)}
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= getattr(subprocess, 'STARTF_USESHOWWINDOW', 1)
+        startupinfo.wShowWindow = getattr(subprocess, 'SW_HIDE', 0)
+        kwargs["startupinfo"] = startupinfo
+    except Exception:
+        pass
+    return kwargs
+
+
+def _is_local_bot_running():
+    return bot_process is not None and bot_process.poll() is None
+
+
+def _process_matches_current_install(command_line: str) -> bool:
+    """Avoid confusing release_test/dist/other copies with this launcher."""
+    cmd = (command_line or "").replace('\\\\', '/').replace('\\', '/').lower()
+    if "--run-bot" not in cmd:
+        return False
+    if getattr(sys, 'frozen', False):
+        base = os.path.abspath(BASE_DIR).replace('\\\\', '/').replace('\\', '/').lower()
+        return base in cmd
+    # Dev/source mode: only consider this project tree.
+    return "main.py" in cmd or "tiktokmcintegrator" in cmd
+
+
+def _list_external_bot_processes(force=False):
+    """Find orphan/background --run-bot processes not owned by app.bot_process."""
+    now = _time.time()
+    if not force and now - _external_bot_scan_cache.get("ts", 0.0) < 1.0:
+        return list(_external_bot_scan_cache.get("items", []))
+
+    local_pid = None
+    local_proc = bot_process
+    if local_proc is not None and local_proc.poll() is None:
+        try:
+            local_pid = int(local_proc.pid)
+        except Exception:
+            local_pid = None
+    current_pid = os.getpid()
+    items = []
+
+    try:
+        if os.name == 'nt':
+            ps_script = (
+                "$ErrorActionPreference='SilentlyContinue'; "
+                "Get-CimInstance Win32_Process | "
+                "Where-Object { $_.CommandLine -like '*--run-bot*' } | "
+                "Select-Object ProcessId,ParentProcessId,Name,CommandLine | "
+                "ConvertTo-Json -Compress"
+            )
+            out = subprocess.check_output(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=4,
+                **_hidden_subprocess_kwargs(),
+            ).strip()
+            if out:
+                raw = json.loads(out)
+                if isinstance(raw, dict):
+                    raw = [raw]
+                for row in raw or []:
+                    pid = int(row.get("ProcessId") or 0)
+                    cmd = row.get("CommandLine") or ""
+                    if pid and pid not in (current_pid, local_pid) and _process_matches_current_install(cmd):
+                        items.append({
+                            "pid": pid,
+                            "ppid": int(row.get("ParentProcessId") or 0),
+                            "name": row.get("Name") or "",
+                            "command": cmd,
+                        })
+        else:
+            out = subprocess.check_output(
+                ["ps", "-eo", "pid=,ppid=,args="],
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=4,
+            )
+            for line in out.splitlines():
+                parts = line.strip().split(None, 2)
+                if len(parts) < 3:
+                    continue
+                pid, ppid, cmd = int(parts[0]), int(parts[1]), parts[2]
+                if pid not in (current_pid, local_pid) and _process_matches_current_install(cmd):
+                    items.append({"pid": pid, "ppid": ppid, "name": "", "command": cmd})
+    except Exception as e:
+        print(f"Bot process scan failed: {e}")
+        items = []
+
+    _external_bot_scan_cache["ts"] = now
+    _external_bot_scan_cache["items"] = list(items)
+    return items
+
+
+def is_any_bot_running():
+    """Return (any_running, local_running, external_processes)."""
+    local_running = _is_local_bot_running()
+    external = _list_external_bot_processes()
+    return bool(local_running or external), local_running, external
+
+
+def _terminate_external_bot_process(pid: int) -> bool:
+    try:
+        if os.name == 'nt':
+            result = subprocess.run(
+                ["taskkill.exe", "/PID", str(int(pid)), "/T", "/F"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                **_hidden_subprocess_kwargs(),
+            )
+            return result.returncode == 0
+        import signal
+        os.kill(int(pid), signal.SIGTERM)
+        deadline = _time.time() + 5
+        while _time.time() < deadline:
+            try:
+                os.kill(int(pid), 0)
+            except OSError:
+                return True
+            _time.sleep(0.2)
+        os.kill(int(pid), signal.SIGKILL)
+        return True
+    except Exception as e:
+        print(f"Failed to terminate external bot PID {pid}: {e}")
+        return False
+
+
+def stop_all_bots():
+    """Stop local bot handle plus orphan/background --run-bot processes."""
+    global bot_process
+    stopped = []
+    local_proc = bot_process
+    if local_proc is not None and local_proc.poll() is None:
+        try:
+            pid = int(local_proc.pid)
+            local_proc.terminate()
+            try:
+                local_proc.wait(timeout=8)
+            except Exception:
+                local_proc.kill()
+                local_proc.wait(timeout=5)
+            stopped.append(pid)
+        except Exception as e:
+            print(f"Failed to stop local bot: {e}")
+        finally:
+            bot_process = None
+
+    for proc in _list_external_bot_processes(force=True):
+        pid = proc.get("pid")
+        if pid and _terminate_external_bot_process(pid):
+            stopped.append(int(pid))
+
+    _external_bot_scan_cache["ts"] = 0.0
+    _external_bot_scan_cache["items"] = []
+    return stopped
 
 
 @atexit.register
@@ -115,7 +302,7 @@ def save_config(data):
 
 def signal_reload():
     """Signal the bot to hot-reload config changes."""
-    signal_file = os.path.join(BASE_DIR, ".reload_signal")
+    signal_file = paths.data(".reload_signal")
     try:
         with open(signal_file, "w") as f:
             f.write("1")
@@ -147,7 +334,7 @@ def read_output(pipe):
         except Exception as e:
             print(f"Auto-report failed: {e}")
         # Zero out viewer stats
-        stats_file = os.path.join(BASE_DIR, "viewer_stats.json")
+        stats_file = paths.data("viewer_stats.json")
         try:
             with open(stats_file, "w", encoding="utf-8") as f:
                 json.dump({"viewers": 0, "total_viewers": 0}, f)
@@ -158,18 +345,103 @@ def read_output(pipe):
 def index():
     return render_template("index.html")
 
+
+@app.route("/health")
+def health():
+    """Native launcher readiness probe."""
+    return jsonify({"status": "ok"})
+
 @app.route("/api/config", methods=["GET"])
 def get_config():
-    return jsonify(load_config())
+    resp = jsonify(load_config())
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
 
 @app.route("/api/config", methods=["POST"])
 def update_config():
     data = request.json
     save_config(data)
-    # Signal hot-reload if bot is running
-    if bot_process is not None and bot_process.poll() is None:
+    # Signal hot-reload if any bot process is running (including orphan/background).
+    if is_any_bot_running()[0]:
         signal_reload()
     return jsonify({"status": "success", "message": "Configuration saved!"})
+
+
+@app.route("/api/test-connection", methods=["POST"])
+def test_connection():
+    """Test Minecraft connection based on posted connector form values.
+
+    The settings UI may have unsaved changes. Do not read only config.yml here,
+    otherwise selecting Forge/ServerTap still tests the previously-saved RCON
+    config and every error says port 25575.
+    """
+    import yaml
+    import requests as _requests
+    from paths import config as _config_path
+
+    payload = request.get_json(silent=True) or {}
+    cfg = {}
+    with open(_config_path("config.yml"), "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+
+    ctype = payload.get("connector_type") or cfg.get("Settings", {}).get("ConnectorType", "rcon")
+
+    if ctype == "servertap":
+        st = payload.get("servertap") or cfg.get("ServerTap", {})
+        host = st.get("Host", "127.0.0.1")
+        port = st.get("Port", 4567)
+        api_key = st.get("ApiKey", "")
+        try:
+            r = _requests.post(
+                f"http://{host}:{port}/api/execute",
+                json={"apiKey": api_key, "command": "list"},
+                timeout=10
+            )
+            if r.status_code == 200:
+                return jsonify({"status": "success", "message": f"ServerTap connected! ({host}:{port})"})
+            elif r.status_code == 401:
+                return jsonify({"status": "error", "message": "Auth failed - check ApiKey"})
+            else:
+                return jsonify({"status": "error", "message": f"HTTP {r.status_code}"})
+        except _requests.exceptions.ConnectionError:
+            return jsonify({"status": "error", "message": f"Cannot connect to {host}:{port} - is ServerTap running?"})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)})
+
+    elif ctype == "forge":
+        fg = payload.get("forge") or cfg.get("Forge", {})
+        host = fg.get("Host", "127.0.0.1")
+        port = fg.get("Port", 5942)
+        password = fg.get("Password", "")
+        try:
+            r = _requests.post(
+                f"http://{host}:{port}/command",
+                json={"password": password, "command": "list"},
+                timeout=10
+            )
+            if r.status_code == 200:
+                return jsonify({"status": "success", "message": f"Forge Mod connected! ({host}:{port})"})
+            else:
+                return jsonify({"status": "error", "message": f"HTTP {r.status_code}"})
+        except _requests.exceptions.ConnectionError:
+            return jsonify({"status": "error", "message": f"Cannot connect to {host}:{port} - is Forge mod running?"})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)})
+
+    else:  # rcon
+        rc = payload.get("rcon") or cfg.get("Rcon", {})
+        host = rc.get("Host", "127.0.0.1")
+        port = rc.get("Port", 25575)
+        password = rc.get("Password", "")
+        try:
+            from mcrcon import MCRcon
+            with MCRcon(host, password, port=port) as mcr:
+                resp = mcr.command("list")
+            return jsonify({"status": "success", "message": f"RCON connected! ({host}:{port})"})
+        except Exception as e:
+            return jsonify({"status": "error", "message": f"Cannot connect to {host}:{port} - {str(e)}"})
+
 
 @app.route("/api/event-registry", methods=["GET"])
 def get_event_registry():
@@ -186,7 +458,10 @@ def get_profiles():
         os.makedirs(PROFILES_DIR)
     files = glob.glob(os.path.join(PROFILES_DIR, "*.yml"))
     profiles = [os.path.basename(f)[:-4] for f in files]
-    return jsonify({"profiles": profiles, "active": get_active_profile()})
+    resp = jsonify({"profiles": profiles, "active": get_active_profile()})
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
 
 @app.route("/api/profiles/switch", methods=["POST"])
 def switch_profile():
@@ -195,8 +470,8 @@ def switch_profile():
     if os.path.exists(profile_path):
         shutil.copy(profile_path, CONFIG_FILE)
         set_active_profile(name)
-        # Signal hot-reload if bot is running
-        if bot_process is not None and bot_process.poll() is None:
+        # Signal hot-reload if any bot process is running (including orphan/background).
+        if is_any_bot_running()[0]:
             signal_reload()
         return jsonify({"status": "success", "message": f"Switched to profile: {name}"})
     return jsonify({"status": "error", "message": "Profile not found"}), 404
@@ -269,33 +544,92 @@ def import_profile():
         
     return jsonify({"status": "error", "message": "Only .yml files are allowed"}), 400
 
+@app.route('/gift_assets/<path:fname>')
+def serve_gift_asset(fname):
+    """Serve downloaded gift animation assets (video/Lottie)."""
+    # Reject path traversal
+    if '..' in fname or fname.startswith('/') or fname.startswith('\\\\'):
+        abort(404)
+    gift_assets_dir = paths.assets('gift_assets')
+    if not os.path.exists(os.path.join(gift_assets_dir, fname)):
+        abort(404)
+    return send_from_directory(gift_assets_dir, fname, as_attachment=False)
+
+@app.route('/avatar_cache/<path:fname>')
+def serve_avatar_cache(fname):
+    """Serve locally cached TikTok profile pictures for overlays."""
+    if '..' in fname or fname.startswith('/') or fname.startswith('\\\\'):
+        abort(404)
+    avatar_dir = os.path.join(paths.ASSETS_DIR, 'avatar_cache')
+    full_path = os.path.abspath(os.path.join(avatar_dir, fname))
+    root = os.path.abspath(avatar_dir)
+    if os.path.commonpath([root, full_path]) != root or not os.path.exists(full_path):
+        abort(404)
+    return send_from_directory(avatar_dir, os.path.basename(fname), as_attachment=False, max_age=86400)
+
 @app.route('/api/gifts/available', methods=['GET'])
 def get_available_gifts():
-    gifts_file = os.path.join(BASE_DIR, "available_gifts.json")
+    gifts_file = paths.data("available_gifts.json")
+    cached_data = None
     if os.path.exists(gifts_file):
         try:
             with open(gifts_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if data:
-                    return jsonify(data)
-        except Exception as e:
-            pass
+                    cached_data = data
+                    # Old caches only had id/name/coins/icon. If the enhanced
+                    # fields are already present, serve the cache immediately.
+                    if any(isinstance(g, dict) and ("primary_effect_id" in g or "resource_id" in g) for g in data):
+                        return jsonify(data)
+        except Exception:
+            cached_data = None
     
-    # Fallback: fetch directly from TikTok API
+    # Fallback/refresh: fetch directly from TikTok API. The plain
+    # device_platform=web call can return an empty 200 body; the web client params
+    # mirror TikTokLive's signed-web request enough to return the full gift list.
     try:
         import requests as req
-        resp = req.get("https://webcast.tiktok.com/webcast/gift/list/", params={"device_platform": "web"}, timeout=10)
+        params = {
+            "aid": "1988",
+            "app_name": "tiktok_web",
+            "device_platform": "web",
+            "browser_language": "en",
+            "browser_name": "Mozilla",
+            "browser_online": "true",
+            "browser_platform": "Win32",
+            "browser_version": "5.0",
+            "cookie_enabled": "true",
+            "screen_width": "1920",
+            "screen_height": "1080",
+        }
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+            "Accept": "application/json,text/plain,*/*",
+            "Referer": "https://www.tiktok.com/",
+            "Origin": "https://www.tiktok.com",
+        }
+        resp = req.get("https://webcast.tiktok.com/webcast/gift/list/", params=params, headers=headers, timeout=10)
         raw = resp.json().get("data", {})
         gifts = []
         for g in raw.get("gifts", []):
             icon_url = ""
             if g.get("icon") and g["icon"].get("url_list") and len(g["icon"]["url_list"]) > 0:
                 icon_url = g["icon"]["url_list"][0]
+            diamond_count = int(g.get("diamond_count", 0) or 0)
+            primary_effect_id = str(g.get("primary_effect_id", "") or "")
+            resource_id = str(g.get("resource_id", "") or "")
             gifts.append({
                 "id": g.get("id", 0),
                 "name": str(g.get("name", "")).lower(),
-                "diamond_count": g.get("diamond_count", 0),
-                "icon": icon_url
+                "diamond_count": diamond_count,
+                "icon": icon_url,
+                # These IDs are the only animation-related fields present in
+                # /webcast/gift/list/. The endpoint does NOT expose a direct
+                # ZIP/MP4 animation URL; GiftEvent.asset is still needed to cache
+                # the actual playable file.
+                "primary_effect_id": primary_effect_id,
+                "resource_id": resource_id,
+                "has_animation": bool(diamond_count >= 100 and (primary_effect_id or resource_id)),
             })
         gifts.sort(key=lambda x: x["diamond_count"])
         # Cache it for next time
@@ -303,52 +637,61 @@ def get_available_gifts():
             json.dump(gifts, f, indent=2)
         return jsonify(gifts)
     except Exception as e:
+        if cached_data:
+            return jsonify(cached_data)
         return jsonify({"error": f"Could not fetch gifts: {str(e)}"}), 500
 
 @app.route("/api/bot/start", methods=["POST"])
 def start_bot():
     global bot_process, bot_logs
-    if bot_process is None or bot_process.poll() is not None:
-        try:
-            bot_logs.clear()
-            
-            # Force UTF-8 encoding for Python subprocess to prevent emoji crashes
-            env = os.environ.copy()
-            env["PYTHONIOENCODING"] = "utf-8"
-            env["PYTHONUNBUFFERED"] = "1"  # Fix output buffering for the packaged exe
-            
-            # Hide the terminal window on Windows
-            creationflags = 0
-            if os.name == 'nt':
-                creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-            
-            # Determine bot executable path (dev vs packaged)
-            if getattr(sys, 'frozen', False):
-                bot_cmd = [sys.executable, '--run-bot']
-            else:
-                bot_cmd = [sys.executable, '-u', 'main.py', '--run-bot']
+    any_running, local_running, external = is_any_bot_running()
+    if any_running:
+        return jsonify({
+            "status": "warning",
+            "message": "Bot is already running in the background!" if external and not local_running else "Bot is already running!",
+            "running": True,
+            "local": local_running,
+            "external": bool(external),
+            "external_pids": [p.get("pid") for p in external],
+        })
 
-            bot_process = subprocess.Popen(
-                bot_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace", # Replace unprintable unicode with ?
-                bufsize=1,
-                env=env,
-                creationflags=creationflags
-            )
-            
-            # Start a thread to read output so the buffer doesn't fill up and freeze the bot
-            t = threading.Thread(target=read_output, args=(bot_process.stdout,))
-            t.daemon = True
-            t.start()
-            
-            return jsonify({"status": "success", "message": "Bot started!"})
-        except Exception as e:
-            return jsonify({"status": "error", "message": f"{str(e)} (Command: {bot_cmd})"}), 500
-    return jsonify({"status": "warning", "message": "Bot is already running!"})
+    bot_cmd = []
+    try:
+        bot_logs.clear()
+
+        # Force UTF-8 encoding for Python subprocess to prevent emoji crashes
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUNBUFFERED"] = "1"  # Fix output buffering for the packaged exe
+
+        # Determine bot executable path (dev vs packaged)
+        if getattr(sys, 'frozen', False):
+            bot_cmd = [sys.executable, '--run-bot']
+        else:
+            bot_cmd = [sys.executable, '-u', 'main.py', '--run-bot']
+
+        bot_process = subprocess.Popen(
+            bot_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace", # Replace unprintable unicode with ?
+            bufsize=1,
+            env=env,
+            **_hidden_subprocess_kwargs(),
+        )
+        _external_bot_scan_cache["ts"] = 0.0
+        _external_bot_scan_cache["items"] = []
+
+        # Start a thread to read output so the buffer doesn't fill up and freeze the bot
+        t = threading.Thread(target=read_output, args=(bot_process.stdout,))
+        t.daemon = True
+        t.start()
+
+        return jsonify({"status": "success", "message": "Bot started!", "running": True, "local": True, "external": False})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"{str(e)} (Command: {bot_cmd})"}), 500
 
 def generate_report():
     """Generate a post-stream report from all log files."""
@@ -385,7 +728,7 @@ def generate_report():
     report_text = "\n".join(lines)
 
     # Save report
-    reports_dir = os.path.join(BASE_DIR, "reports")
+    reports_dir = paths.assets("reports")
     os.makedirs(reports_dir, exist_ok=True)
     room_id = state.get("room_id", "unknown")
     filename = f"stream_{now.strftime('%Y-%m-%d_%H%M')}_{room_id}.txt"
@@ -407,11 +750,8 @@ def generate_report_manual():
 
 @app.route("/api/bot/stop", methods=["POST"])
 def stop_bot():
-    global bot_process
-    if bot_process is not None and bot_process.poll() is None:
-        bot_process.terminate()
-        bot_process.wait()
-        bot_process = None
+    stopped = stop_all_bots()
+    if stopped:
         # Generate post-stream report
         try:
             generate_report()
@@ -419,20 +759,26 @@ def stop_bot():
             print(f"Report generation failed: {e}")
         bot_logs.append("--- Bot Terminated ---")
         # Zero out viewer stats so dashboard doesn't show stale data
-        stats_file = os.path.join(BASE_DIR, "viewer_stats.json")
+        stats_file = paths.data("viewer_stats.json")
         try:
             with open(stats_file, "w", encoding="utf-8") as f:
                 json.dump({"viewers": 0, "total_viewers": 0}, f)
         except Exception:
             pass
-        return jsonify({"status": "success", "message": "Bot stopped!"})
+        return jsonify({"status": "success", "message": "Bot stopped!", "stopped_pids": stopped})
     return jsonify({"status": "warning", "message": "Bot is not running!"})
 
 @app.route("/api/bot/status", methods=["GET"])
 def bot_status():
-    global bot_process
-    is_running = bot_process is not None and bot_process.poll() is None
-    return jsonify({"running": is_running})
+    _running, local_running, external = is_any_bot_running()
+    external_pids = [p.get("pid") for p in external]
+    return jsonify({
+        "running": bool(local_running or external),
+        "local": local_running,
+        "external": bool(external),
+        "external_pids": external_pids,
+        "pid": bot_process.pid if local_running and bot_process is not None else (external_pids[0] if external_pids else None),
+    })
 
 @app.route("/api/bot/logs", methods=["GET"])
 def bot_logs_endpoint():
@@ -440,8 +786,122 @@ def bot_logs_endpoint():
     with _bot_logs_lock:
         return jsonify({"logs": list(bot_logs)})
 
+@app.route("/api/bot/logs/clear", methods=["POST"])
+def clear_bot_logs_endpoint():
+    """Clear the dashboard's in-memory bot console history."""
+    with _bot_logs_lock:
+        bot_logs.clear()
+    return jsonify({"ok": True})
+
+@app.route("/api/console/logs", methods=["GET"])
+def sim_console_logs_endpoint():
+    """Return simulated Minecraft console log (commands sent + responses).
+
+    Reads from the shared sim_console.log file in BASE_DIR. Both the dashboard
+    (this endpoint) and the bot (minecraftDiamond._sim_console_push) write
+    here when running. The log is shared across processes so we don't need
+    to import the bot's modules in the dashboard.
+    """
+    log_path = paths.logs("sim_console.log")
+    if not os.path.exists(log_path):
+        return jsonify({"logs": []})
+    try:
+        # Keep the last 500 lines, which matches the deque size
+        with open(log_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        return jsonify({"logs": [l.rstrip("\n") for l in lines[-500:]]})
+    except Exception:
+        return jsonify({"logs": []})
+
+@app.route("/api/console/clear", methods=["POST"])
+def sim_console_clear_endpoint():
+    """Clear the simulated Minecraft console log."""
+    log_path = paths.logs("sim_console.log")
+    try:
+        if os.path.exists(log_path):
+            os.remove(log_path)
+    except Exception:
+        pass
+    return jsonify({"ok": True})
+
+@app.route("/api/console/send", methods=["POST"])
+def sim_console_send_endpoint():
+    """Manually send a command (for debugging when no real Minecraft console).
+
+    The dashboard process is separate from the bot process — we don't
+    import bot modules here. Instead, we read the connector config
+    ourselves and POST directly to the mod if Forge is selected, or
+    log a message if RCON is selected (the bot handles that path).
+    """
+    import traceback
+    import requests as _req
+    try:
+        data = request.get_json() or {}
+        cmd = (data.get("command") or "").strip()
+        if not cmd:
+            return jsonify({"error": "no command"}), 400
+
+        # Live-read the config (don't depend on the bot process)
+        cfg_path = paths.config("config.yml")
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        connector = (cfg.get("Settings", {}) or {}).get("ConnectorType", "rcon")
+        if connector not in ("rcon", "forge"):
+            connector = "rcon"
+
+        # Always append to the local sim console for the UI display
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        try:
+            log_path = paths.logs("sim_console.log")
+            with open(log_path, "a", encoding="utf-8") as lf:
+                lf.write(f"[{ts}] [→] {cmd}\n")
+        except Exception:
+            pass
+
+        if connector == "forge":
+            forge = (cfg.get("Forge", {}) or {})
+            host = str(forge.get("Host", "127.0.0.1"))
+            port = int(forge.get("Port", 5942))
+            password = str(forge.get("Password", ""))
+            try:
+                r = _req.post(
+                    f"http://{host}:{port}/command",
+                    json={"password": password, "command": cmd},
+                    timeout=5,
+                )
+                if r.status_code == 200:
+                    try:
+                        out = r.json().get("output", "")
+                    except Exception:
+                        out = ""
+                    return jsonify({"ok": True, "output": out})
+                else:
+                    return jsonify({
+                        "ok": False,
+                        "error": f"HTTP {r.status_code}: {r.text[:200]}"
+                    }), 502
+            except _req.exceptions.ConnectionError:
+                return jsonify({
+                    "ok": False,
+                    "error": f"forge mod unreachable at {host}:{port} (is MC running with the mod?)"
+                }), 503
+            except Exception as e:
+                return jsonify({"ok": False, "error": str(e)}), 500
+        else:
+            # RCON path — the bot handles this. We just log that we tried.
+            return jsonify({
+                "ok": True,
+                "note": "RCON mode — bot will execute this on the next event (sim console doesn't drive RCON directly)"
+            })
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "type": type(e).__name__,
+            "trace": traceback.format_exc().splitlines()[-5:]
+        }), 500
+
 def get_active_streaks():
-    data = safe_json_read(os.path.join(BASE_DIR, "active_streaks.json"))
+    data = safe_json_read(paths.data("active_streaks.json"))
     return jsonify(data if data is not None else {})
 
 @app.route("/api/upload-sound", methods=["POST"])
@@ -454,7 +914,7 @@ def upload_sound():
         return jsonify({"error": "No file selected"}), 400
 
     # Save to sounds/ directory
-    sounds_dir = os.path.join(BASE_DIR, "sounds")
+    sounds_dir = paths.assets("sounds")
     os.makedirs(sounds_dir, exist_ok=True)
 
     filename = secure_filename(file.filename)
@@ -471,7 +931,7 @@ def preview_sound():
         return jsonify({"error": "File not found"}), 404
 
     # Security: only allow serving from the sounds/ directory
-    sounds_dir = os.path.join(BASE_DIR, "sounds")
+    sounds_dir = paths.assets("sounds")
     real_path = os.path.realpath(filepath)
     real_sounds = os.path.realpath(sounds_dir)
     if not real_path.startswith(real_sounds):
@@ -482,7 +942,7 @@ def preview_sound():
 @app.route("/overlay-demo/<overlay_type>")
 def overlay_demo_page(overlay_type):
     """Demo overlay with dark background for preview."""
-    valid_types = ['chat', 'gifts', 'follows', 'superfan', 'topgift', 'topstreak', 'song']
+    valid_types = ['chat', 'gifts', 'follows', 'superfan', 'topgift', 'topstreak', 'topshowcase', 'topgifter', 'song', 'coingoal', 'giftgoal', 'oneblock']
     if overlay_type not in valid_types:
         return "Invalid overlay type", 404
     return render_template("overlay_demo.html", overlay_type=overlay_type)
@@ -491,7 +951,7 @@ def overlay_demo_page(overlay_type):
 @app.route("/overlay/<overlay_type>")
 def overlay_page(overlay_type):
     """Serve overlay pages for OBS browser sources."""
-    valid_types = ['chat', 'gifts', 'follows', 'superfan', 'topgift', 'topstreak', 'song']
+    valid_types = ['chat', 'gifts', 'follows', 'superfan', 'topgift', 'topstreak', 'topshowcase', 'topgifter', 'song', 'coingoal', 'giftgoal', 'oneblock']
     if overlay_type not in valid_types:
         return "Invalid overlay type", 404
     return render_template("overlay.html", overlay_type=overlay_type)
@@ -505,6 +965,8 @@ _tts_user_at = {}  # {uid: last_timestamp}
 _tts_loop = _asyncio.new_event_loop()
 _tts_loop_thread = threading.Thread(target=_tts_loop.run_forever, daemon=True)
 _tts_loop_thread.start()
+_tts_warmup_started = False
+_tts_warmup_lock = threading.Lock()
 
 
 def _run_async(coro):
@@ -514,8 +976,8 @@ def _run_async(coro):
     return future.result(timeout=30)
 
 
-TTS_CONFIG_FILE = os.path.join(BASE_DIR, "tts_config.json")
-TTS_HISTORY_FILE = os.path.join(BASE_DIR, "tts_history.json")
+TTS_CONFIG_FILE = paths.data("tts_config.json")
+TTS_HISTORY_FILE = paths.data("tts_history.json")
 
 def _load_tts_history():
     """Load TTS history from JSON file."""
@@ -556,17 +1018,105 @@ def _load_tts_config():
         saved.setdefault(k, v)
     return saved
 
+def _normalize_tts_username(value):
+    """Normalize TikTok usernames for TTS permission checks."""
+    return str(value or "").strip().lower().lstrip("@")
+
+
+def _normalize_tts_whitelist(cfg):
+    """Normalize saved TTS whitelist entries in-place."""
+    perm = cfg.setdefault("permission", {})
+    entries = perm.get("whitelist", []) or []
+    seen = set()
+    normalized = []
+    for entry in entries:
+        username = _normalize_tts_username(entry)
+        if username and username not in seen:
+            seen.add(username)
+            normalized.append(username)
+    perm["whitelist"] = normalized
+    return cfg
+
+
 def _save_tts_config(cfg):
     """Save TTS config."""
-    save_json(TTS_CONFIG_FILE, cfg)
+    save_json(TTS_CONFIG_FILE, _normalize_tts_whitelist(cfg))
+
+
+def start_tts_warmup_once():
+    """Warm TTS exactly once per process, in the background.
+
+    This pays the edge-tts import/network setup + pygame mixer init before the
+    first live viewer TTS. It never plays audio, never writes history, and never
+    touches cooldown state.
+    """
+    global _tts_warmup_started
+    with _tts_warmup_lock:
+        if _tts_warmup_started:
+            return False
+        _tts_warmup_started = True
+
+    def _warm():
+        log_file = paths.logs("tts_debug.log")
+        out_file = None
+        try:
+            cfg = _load_tts_config()
+            if not cfg.get("enabled", True):
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write("[TTS WARMUP] skipped (disabled)\n")
+                return
+
+            import edge_tts
+            tts_dir = paths.assets("tts")
+            os.makedirs(tts_dir, exist_ok=True)
+            out_file = os.path.join(tts_dir, "tts_warmup.mp3")
+
+            voice = cfg.get("voice", "en-US-AriaNeural")
+            speed = cfg.get("speed", "+0%")
+            pitch = cfg.get("pitch", "+0Hz")
+            rate = speed if speed and (speed.startswith("+") or speed.startswith("-")) else ("+" + speed)
+
+            async def _gen():
+                # Punctuation-only text makes edge-tts raise NoAudioReceived, so
+                # the old warmup never primed its network/TLS path. Generate a
+                # tiny real clip and discard it without playback instead.
+                communicate = edge_tts.Communicate("Ready", voice, rate=rate, pitch=pitch)
+                await communicate.save(out_file)
+
+            _run_async(_gen())
+
+            try:
+                import pygame
+                if not pygame.mixer.get_init():
+                    pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+            except Exception as audio_err:
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write(f"[TTS WARMUP] mixer init skipped/failed: {audio_err}\n")
+
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(f"[TTS WARMUP] ok voice={voice} rate={rate} pitch={pitch}\n")
+        except Exception as e:
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(f"[TTS WARMUP] failed: {e}\n")
+        finally:
+            if out_file:
+                try:
+                    os.remove(out_file)
+                except Exception:
+                    pass
+
+    threading.Thread(target=_warm, daemon=True).start()
+    return True
+
 
 def _check_tts_permission(cfg, user_info):
     """Check if a user has TTS permission. Returns (allowed, reason)."""
     perm = cfg.get("permission", {})
-    uid = (user_info.get("unique_id") or "").lower()
+    uid = _normalize_tts_username(user_info.get("unique_id"))
 
     # Whitelist always wins
-    if uid and uid in [w.lower() for w in perm.get("whitelist", [])]:
+    whitelist = [_normalize_tts_username(w) for w in perm.get("whitelist", [])]
+    if uid and uid in whitelist:
         return True, "whitelisted"
 
     if perm.get("everyone"):
@@ -698,13 +1248,13 @@ def _tts_speak_impl():
     pitch = cfg.get("pitch", "+0Hz")
 
     def _play_tts():
-        log_file = os.path.join(BASE_DIR, "tts_debug.log")
+        log_file = paths.logs("tts_debug.log")
         out_file = None
         processed_file = None
         try:
             import edge_tts, traceback
 
-            tts_dir = os.path.join(BASE_DIR, "tts")
+            tts_dir = paths.assets("tts")
             os.makedirs(tts_dir, exist_ok=True)
             out_file = os.path.join(tts_dir, f"tts_{int(_time.time())}.mp3")
 
@@ -795,6 +1345,132 @@ def _tts_speak_impl():
     return jsonify({"status": "ok"})
 
 
+# ── COIN GOAL JAR ─────────────────────────────────────────────────
+COIN_GOAL_FILE = paths.data("coin_goal.json")
+COIN_GOAL_DEFAULTS = {"current": 0, "goal": 10000, "label": "Tip Jar", "sublabel": ""}
+
+
+@app.route("/api/coingoal", methods=["POST"])
+def update_coin_goal():
+    """Update coin goal jar state. Called from dashboard Customize popup."""
+    data = request.json or {}
+    current = load_json(COIN_GOAL_FILE, dict(COIN_GOAL_DEFAULTS))
+    if not isinstance(current, dict):
+        current = {}
+    merged = dict(COIN_GOAL_DEFAULTS)
+    merged.update({k: v for k, v in current.items() if k in COIN_GOAL_DEFAULTS})
+
+    mode = data.get("mode", "set")
+    if data.get("reset"):
+        merged["current"] = 0
+    elif mode == "adjust":
+        try:
+            merged["current"] = max(0, int(merged.get("current", 0)) + int(data.get("current", 0)))
+        except (ValueError, TypeError):
+            pass
+    elif mode == "set":
+        if "current" in data:
+            try:
+                merged["current"] = max(0, int(data["current"]))
+            except (ValueError, TypeError):
+                pass
+        if "goal" in data:
+            try:
+                merged["goal"] = max(1, int(data["goal"]))
+            except (ValueError, TypeError):
+                pass
+        if "label" in data:
+            merged["label"] = str(data["label"]).strip() or merged["label"]
+        if "sublabel" in data:
+            merged["sublabel"] = str(data["sublabel"]).strip()
+
+    save_json(COIN_GOAL_FILE, merged)
+    return jsonify({"status": "success", "data": merged})
+
+
+# ── GIFT GOAL ─────────────────────────────────────────────────
+GIFT_GOAL_FILE = paths.data("gift_goal.json")
+GIFT_GOAL_DEFAULTS = {
+    "gift_id": "",
+    "gift_name": "",
+    "gift_icon": "",
+    "gift_asset_url": "",
+    "gift_diamond_count": 0,
+    "gift_primary_effect_id": "",
+    "gift_resource_id": "",
+    "gift_has_animation": False,
+    "goal": 100,
+    "current": 0,
+    "header": "Goal Today",
+}
+
+
+def _cached_gift_asset_url(gift_id):
+    """Return cached local gift animation URL if this gift was already downloaded."""
+    try:
+        from assets.gift_assets.manifest import get_entry
+        entry = get_entry(int(gift_id))
+        if entry and os.path.exists(entry.get("local", "")):
+            return entry.get("local_url", "") or ""
+    except Exception:
+        pass
+    return ""
+
+
+@app.route("/api/giftgoal", methods=["POST"])
+def update_gift_goal():
+    """Update gift goal state. Called from dashboard Customize popup."""
+    data = request.json or {}
+    current = load_json(GIFT_GOAL_FILE, dict(GIFT_GOAL_DEFAULTS))
+    if not isinstance(current, dict):
+        current = {}
+    merged = dict(GIFT_GOAL_DEFAULTS)
+    merged.update({k: v for k, v in current.items() if k in GIFT_GOAL_DEFAULTS})
+
+    if "reset" in data and data["reset"]:
+        merged["current"] = 0
+    else:
+        if "gift_id" in data:
+            merged["gift_id"] = str(data["gift_id"])
+        if "gift_name" in data:
+            merged["gift_name"] = str(data["gift_name"])
+        if "gift_icon" in data:
+            merged["gift_icon"] = str(data["gift_icon"])
+        if "gift_asset_url" in data:
+            merged["gift_asset_url"] = str(data["gift_asset_url"])
+        if "gift_diamond_count" in data:
+            try:
+                merged["gift_diamond_count"] = max(0, int(data["gift_diamond_count"]))
+            except (ValueError, TypeError):
+                pass
+        if "gift_primary_effect_id" in data:
+            merged["gift_primary_effect_id"] = str(data["gift_primary_effect_id"])
+        if "gift_resource_id" in data:
+            merged["gift_resource_id"] = str(data["gift_resource_id"])
+        if "gift_has_animation" in data:
+            merged["gift_has_animation"] = bool(data["gift_has_animation"])
+        if "gift_id" in data and not data.get("gift_asset_url"):
+            # Avoid stale animation when switching selected gift. If this gift has
+            # already been cached by the top-gift downloader, use it immediately;
+            # otherwise the overlay falls back to the static icon.
+            merged["gift_asset_url"] = _cached_gift_asset_url(merged.get("gift_id", ""))
+        if "goal" in data:
+            try:
+                merged["goal"] = max(1, int(data["goal"]))
+            except (ValueError, TypeError):
+                pass
+        if "header" in data:
+            merged["header"] = str(data["header"]).strip() or merged["header"]
+        if "current" in data:
+            try:
+                merged["current"] = max(0, int(data["current"]))
+            except (ValueError, TypeError):
+                pass
+
+    save_json(GIFT_GOAL_FILE, merged)
+    return jsonify({"status": "success", "data": merged})
+
+
 if __name__ == "__main__":
     ensure_profiles_setup()
     # Start song queue worker for Spotify auto-play
@@ -803,4 +1479,8 @@ if __name__ == "__main__":
         start_song_queue_worker()
     except Exception as e:
         print(f"[SONG-QUEUE] Failed to start worker: {e}")
+    try:
+        start_tts_warmup_once()
+    except Exception as e:
+        print(f"[TTS WARMUP] Failed to start: {e}")
     app.run(host="0.0.0.0", port=5000, debug=True)

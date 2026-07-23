@@ -4,8 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TikTok to Minecraft Integrator</title>
-<link rel="stylesheet" href="/static/style.css?v=19">
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>
+  // No-flash theme: apply cached choice before CSS paints. Dark is default.
+  try { if (localStorage.getItem('tmc-theme') === 'light') document.documentElement.setAttribute('data-theme','light'); } catch(e){}
+</script>
+<link rel="stylesheet" href="/static/style.css?v=35">
+<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -34,6 +38,9 @@
     <a class="nav-item" data-panel="overlays" onclick="switchPanel('overlays')">
       <i class="fa-solid fa-tv"></i><span class="nav-label">Overlays</span>
     </a>
+    <a class="nav-item" data-panel="addons" onclick="switchPanel('addons')">
+      <i class="fa-solid fa-puzzle-piece"></i><span class="nav-label">Add-ons</span>
+    </a>
     <a class="nav-item" data-panel="song" onclick="switchPanel('song')">
       <i class="fa-solid fa-music"></i><span class="nav-label">Song</span>
     </a>
@@ -59,6 +66,10 @@
       <span class="tiktok-uname" id="tiktok-handle-display">@loading...</span>
     </div>
     <div class="topbar-right">
+      <div class="theme-toggle" id="theme-toggle" title="Switch theme">
+        <button type="button" data-theme-set="light" id="theme-btn-light">☀️</button>
+        <button type="button" data-theme-set="dark" id="theme-btn-dark">🌙</button>
+      </div>
       <select class="profile-select" id="active-profile-select"></select>
       <button class="btn btn-ghost btn-sm" id="btn-manage-profiles" title="Manage Profiles"><i class="fa-solid fa-gear"></i></button>
       <button class="btn btn-primary" onclick="toggleBot()" id="btn-toggle">
@@ -116,6 +127,7 @@
           <div class="ticker-header">
             <h3><i class="fa-solid fa-comments"></i> Recent Chat</h3>
             <div style="display:flex;align-items:center;gap:8px;">
+              <button class="chat-new-msg-badge" id="chat-new-msg-badge" onclick="jumpToLiveChat()" style="display:none;" title="Jump to latest"></button>
               <span class="badge" id="ticker-count">0</span>
               <button class="btn btn-ghost btn-sm" onclick="clearChatLog()">Clear</button>
             </div>
@@ -139,6 +151,11 @@
             <label class="chat-level-filter">Min Gifter Lv <input type="number" id="chat-min-gifter-level" min="0" max="50" value="0" onchange="filterChatLog()" oninput="filterChatLog()"></label>
             <label class="chat-level-filter">Min Member Lv <input type="number" id="chat-min-member-level" min="0" max="50" value="0" onchange="filterChatLog()" oninput="filterChatLog()"></label>
           </div>
+          <div class="chat-history-controls">
+            <button class="btn btn-ghost btn-sm" id="chat-load-older" onclick="loadOlderChat()" style="display:none;">Load older</button>
+            <button class="btn btn-ghost btn-sm" id="chat-show-full" onclick="showFullChatHistory()" style="display:none;">Show full history</button>
+            <span id="chat-history-status" class="chat-history-status"></span>
+          </div>
           <div class="ticker-body" id="chat-log-container">
             <div class="ticker-empty">No chat messages yet...</div>
           </div>
@@ -155,8 +172,23 @@
         </div>
       </div>
 
-      <!-- Gift Log + Follow Log -->
-      <div class="two-col">
+      <!-- Minecraft Simulated Console (debug) -->
+      <div class="form-card" style="margin-top:16px;">
+        <div class="console-header" style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+          <h3 style="margin:0;"><i class="fa-solid fa-cube"></i> Minecraft Sim Console</h3>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input type="text" id="sim-console-input" placeholder="/say hello" style="padding:6px 10px; background:rgba(0,0,0,0.3); color:var(--text-primary); border:1px solid var(--border-subtle); border-radius:6px; font-size:13px; width:280px;" onkeydown="if(event.key==='Enter'){sendSimConsoleCommand();}">
+            <button class="btn btn-ghost btn-sm" onclick="sendSimConsoleCommand()"><i class="fa-solid fa-paper-plane"></i> Send</button>
+            <button class="btn btn-ghost btn-sm" onclick="clearSimConsole()">Clear</button>
+          </div>
+        </div>
+        <div class="console-body" id="sim-console-body" style="max-height:280px;">
+          <span style="opacity:0.5;">No commands sent yet. Connect a connector (RCON or Forge Mod) and trigger an event, or type a command above and hit Enter.</span>
+        </div>
+      </div>
+
+      <!-- Gift Log + Follow Log + SuperFan Log -->
+      <div class="three-col logs-three-col">
         <div class="event-ticker" style="height: auto; max-height: 350px;">
           <div class="ticker-header">
             <h3><i class="fa-solid fa-gifts"></i> Recent Gifts</h3>
@@ -191,6 +223,19 @@
             <div class="ticker-empty">No new followers yet...</div>
           </div>
         </div>
+
+        <div class="event-ticker superfan-ticker" style="height: auto; max-height: 350px;">
+          <div class="ticker-header">
+            <h3><i class="fa-solid fa-star"></i> Recent SuperFans</h3>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="badge" id="superfan-count">0</span>
+              <button class="btn btn-ghost btn-sm" onclick="clearSuperfanLog()">Clear</button>
+            </div>
+          </div>
+          <div class="ticker-body" id="superfan-log-container">
+            <div class="ticker-empty">No superfan events yet...</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -217,6 +262,27 @@
           </div>
         </div>
         <div class="form-card">
+          <h3><i class="fa-solid fa-plug"></i> Minecraft Connector</h3>
+          <div class="form-hint">Pick how the app sends commands to Minecraft. RCON needs a dedicated server; Forge Mod runs against single-player; ServerTap runs on Paper/Spigot server.</div>
+          <div class="connector-seg" role="radiogroup" aria-label="Connector type">
+            <input type="radio" name="connector-type" id="connector-type-rcon" value="rcon" checked>
+            <input type="radio" name="connector-type" id="connector-type-forge" value="forge">
+            <input type="radio" name="connector-type" id="connector-type-servertap" value="servertap">
+            <label for="connector-type-rcon" class="connector-seg-item">
+              <span class="connector-seg-title">RCON</span>
+              <span class="connector-seg-desc">Legacy · needs server</span>
+            </label>
+            <label for="connector-type-forge" class="connector-seg-item">
+              <span class="connector-seg-title">Forge Mod</span>
+              <span class="connector-seg-desc">Single-player · no server</span>
+            </label>
+            <label for="connector-type-servertap" class="connector-seg-item">
+              <span class="connector-seg-title">ServerTap</span>
+              <span class="connector-seg-desc">Paper/Spigot · ServerTap</span>
+            </label>
+          </div>
+        </div>
+        <div class="form-card" id="rcon-settings-card">
           <h3><i class="fa-solid fa-server"></i> RCON Config</h3>
           <div class="form-group">
             <label>Host</label>
@@ -229,6 +295,76 @@
           <div class="form-group">
             <label>Password</label>
             <input type="password" id="rcon-password" placeholder="Password">
+          </div>
+          <button type="button" class="btn btn-primary btn-sm connector-test-btn" onclick="testConnection()">
+            <i class="fa-solid fa-plug-circle-check"></i> Test Connection
+          </button>
+        </div>
+        <div class="form-card" id="forge-settings-card" style="display:none;">
+          <h3><i class="fa-solid fa-cube"></i> Forge Mod Config</h3>
+          <div class="form-hint">HTTP endpoint the Forge mod listens on (default localhost:5942).</div>
+          <div class="form-group">
+            <label>Host</label>
+            <input type="text" id="forge-host" placeholder="127.0.0.1">
+          </div>
+          <div class="form-group">
+            <label>Port</label>
+            <input type="number" id="forge-port" placeholder="5942">
+          </div>
+          <div class="form-group">
+            <label>Password <small>(optional, loopback only)</small></label>
+            <input type="password" id="forge-password" placeholder="">
+          </div>
+          <button type="button" class="btn btn-primary btn-sm connector-test-btn" onclick="testConnection()">
+            <i class="fa-solid fa-plug-circle-check"></i> Test Connection
+          </button>
+        </div>
+        <div class="form-card" id="servertap-settings-card" style="display:none;">
+          <h3><i class="fa-solid fa-plug"></i> ServerTap Config</h3>
+          <div class="form-hint">REST API on Paper/Spigot server (default localhost:4567). Get ApiKey from ServerTap config.yml.</div>
+          <div class="form-group">
+            <label>Host</label>
+            <input type="text" id="servertap-host" placeholder="127.0.0.1">
+          </div>
+          <div class="form-group">
+            <label>Port</label>
+            <input type="number" id="servertap-port" placeholder="4567">
+          </div>
+          <div class="form-group">
+            <label>ApiKey <small>(from ServerTap config)</small></label>
+            <input type="password" id="servertap-apikey" placeholder="">
+          </div>
+          <button type="button" class="btn btn-primary btn-sm connector-test-btn" onclick="testConnection()">
+            <i class="fa-solid fa-plug-circle-check"></i> Test Connection
+          </button>
+        </div>
+        <div class="form-card">
+          <h3><i class="fa-solid fa-sliders"></i> Options</h3>
+          <div class="opt-row">
+            <div class="opt-row-text">
+              <span class="opt-row-title"><i class="fa-solid fa-download"></i> Gift Animation Downloader</span>
+              <span class="opt-row-hint">100+ coin gifts download their video/Lottie asset to release/gift_assets/ for the overlay. Off by default.</span>
+            </div>
+            <div class="opt-row-control">
+              <label class="eb-toggle">
+                <input type="checkbox" id="gift-asset-downloader">
+                <span class="eb-toggle-slider"></span>
+              </label>
+              <span id="gift-asset-downloader-label">Disabled</span>
+            </div>
+          </div>
+          <div class="opt-row">
+            <div class="opt-row-text">
+              <span class="opt-row-title"><i class="fa-solid fa-bug"></i> Debug Mode</span>
+              <span class="opt-row-hint">Records every TikTok event to superfan_debug.log for troubleshooting. Leave OFF for normal streaming — it grows the log file fast. Off by default.</span>
+            </div>
+            <div class="opt-row-control">
+              <label class="eb-toggle">
+                <input type="checkbox" id="debug-mode">
+                <span class="eb-toggle-slider"></span>
+              </label>
+              <span id="debug-mode-label">Disabled</span>
+            </div>
           </div>
         </div>
       </div>
@@ -256,18 +392,6 @@
         <div style="display:flex; gap:8px;">
           <button class="btn btn-primary btn-sm" id="btn-add-gift"><i class="fa-solid fa-plus"></i> Add Gift</button>
           <button class="btn btn-primary" id="btn-save-gifts"><i class="fa-solid fa-save"></i> Save Gifts</button>
-        </div>
-      </div>
-
-      <div class="form-card">
-        <h3><i class="fa-solid fa-fire" style="color:var(--warning)"></i> Streak Delta Gifts</h3>
-        <div class="form-hint">Gifts that calculate streak deltas instead of full repeat counts.</div>
-        <div class="chip-row" id="streak-delta-selected">
-          <span class="streak-delta-empty">No streak delta gifts selected. Search and pick below.</span>
-        </div>
-        <div class="form-group">
-          <input type="text" id="streak-delta-search" placeholder="Search gifts by name or ID..." autocomplete="off">
-          <div id="streak-delta-dropdown" style="display:none; position:absolute; background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:var(--radius-md); padding:10px; max-height:240px; overflow-y:auto; z-index:100; margin-top:4px; width:100%; max-width:400px; box-shadow:var(--shadow-elevated);"></div>
         </div>
       </div>
 
@@ -320,7 +444,7 @@
                 <button class="filter-pill active" data-val="follower" onclick="toggleFilterPill(this)">Follower</button>
                 <button class="filter-pill active" data-val="newbie" onclick="toggleFilterPill(this)">Newbie</button>
               </div>
-              <div class="filter-hint">Toggle to filter. All active = show everything.</div>
+              <div class="filter-hint">Click one or more categories to show only those. All active = show everything.</div>
             </div>
             <div class="filter-row">
               <div class="filter-group"><label class="filter-label">Min Gifter Lv</label><input type="number" class="filter-input" id="chat-min-gifter" value="0" min="0" max="50" oninput="updateOverlayUrl('chat')"></div>
@@ -393,7 +517,25 @@
         </div>
       </div>
 
-      <!-- Top Gift Overlay -->
+      <!-- Combined Top Showcase Overlay -->
+      <div class="overlay-section overlay-section-featured">
+        <div class="overlay-section-header">
+          <div class="overlay-section-title">
+            <div class="overlay-icon" style="background:linear-gradient(135deg,#ff004f,#fbbf24,#00f2ea);"><i class="fa-solid fa-wand-magic-sparkles"></i></div>
+            <div><h3>Top Showcase Overlay</h3><p class="form-hint">One efficient source alternating the unchanged Top Gift and Top Streak cards every 5 seconds</p></div>
+          </div>
+          <div class="overlay-url-bar">
+            <input type="text" class="overlay-url-input" id="overlay-url-topshowcase" readonly>
+            <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('topshowcase')"><i class="fa-solid fa-copy"></i> Copy URL</button>
+          </div>
+        </div>
+        <div class="overlay-section-body">
+          <div class="overlay-preview-frame"><div class="preview-label">LIVE PREVIEW</div><iframe id="preview-topshowcase" class="overlay-iframe"></iframe></div>
+          <div class="overlay-size-hint">Recommended OBS size: <strong>800 x 600</strong> (use this instead of separate Top Gift + Top Streak sources)</div>
+        </div>
+      </div>
+
+      <!-- Top Gift Overlay (legacy standalone) -->
       <div class="overlay-section overlay-section-featured">
         <div class="overlay-section-header">
           <div class="overlay-section-title">
@@ -439,6 +581,10 @@
             <div><h3>Song Request Overlay</h3><p class="form-hint">Compact card showing now playing &amp; next up</p></div>
           </div>
           <div class="overlay-url-bar">
+            <select class="overlay-url-input" id="song-skin-select" style="max-width:160px;flex:0 0 auto;" onchange="updateOverlayUrl('song')">
+              <option value="default">Default (glass)</option>
+              <option value="pixel">8-Bit / Pixel</option>
+            </select>
             <input type="text" class="overlay-url-input" id="overlay-url-song" readonly>
             <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('song')"><i class="fa-solid fa-copy"></i> Copy URL</button>
           </div>
@@ -449,6 +595,103 @@
         </div>
       </div>
 
+      <!-- Coin Goal Jar Overlay -->
+      <div class="overlay-section overlay-section-featured">
+        <div class="overlay-section-header">
+          <div class="overlay-section-title">
+            <div class="overlay-icon" style="background:linear-gradient(135deg,#ffcc00,#ff9500);"><i class="fa-solid fa-jar"></i></div>
+            <div><h3>Coin Goal Jar</h3><p class="form-hint">Pixelated glass jar that fills with coins from gifts</p></div>
+          </div>
+          <div class="overlay-url-bar">
+            <input type="text" class="overlay-url-input" id="overlay-url-coingoal" readonly>
+            <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('coingoal')"><i class="fa-solid fa-copy"></i> Copy URL</button>
+            <button class="btn btn-secondary btn-sm" onclick="openCoinGoalModal()"><i class="fa-solid fa-sliders"></i> Customize</button>
+          </div>
+        </div>
+        <div class="overlay-section-body">
+          <div class="overlay-preview-frame"><div class="preview-label">LIVE PREVIEW</div><iframe id="preview-coingoal" class="overlay-iframe"></iframe></div>
+          <div class="overlay-size-hint">Recommended OBS size: <strong>280 x 420</strong> (corner jar)</div>
+        </div>
+      </div>
+
+      <!-- Gift Goal Overlay -->
+      <div class="overlay-section overlay-section-featured">
+        <div class="overlay-section-header">
+          <div class="overlay-section-title">
+            <div class="overlay-icon" style="background:linear-gradient(135deg,#1DB954,#1ed760);"><i class="fa-solid fa-bullseye"></i></div>
+            <div><h3>Gift Goal</h3><p class="form-hint">Track a specific gift toward a count goal</p></div>
+          </div>
+          <div class="overlay-url-bar">
+            <input type="text" class="overlay-url-input" id="overlay-url-giftgoal" readonly>
+            <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('giftgoal')"><i class="fa-solid fa-copy"></i> Copy URL</button>
+            <button class="btn btn-secondary btn-sm" onclick="openGiftGoalModal()"><i class="fa-solid fa-sliders"></i> Customize</button>
+          </div>
+        </div>
+        <div class="overlay-section-body">
+          <div class="overlay-preview-frame"><div class="preview-label">LIVE PREVIEW</div><iframe id="preview-giftgoal" class="overlay-iframe"></iframe></div>
+          <div class="overlay-size-hint">Recommended OBS size: <strong>120 x 140</strong> (compact corner)</div>
+        </div>
+      </div>
+
+      <!-- Top Gifter Podium Overlay -->
+      <div class="overlay-section overlay-section-featured">
+        <div class="overlay-section-header">
+          <div class="overlay-section-title">
+            <div class="overlay-icon" style="background:linear-gradient(135deg,#fbbf24,#b87f00);"><i class="fa-solid fa-crown"></i></div>
+            <div><h3>Top Gifter Podium</h3><p class="form-hint">Podium-style ranking of top 3 gifters per stream</p></div>
+          </div>
+          <div class="overlay-url-bar">
+            <input type="text" class="overlay-url-input" id="overlay-url-topgifter" readonly>
+            <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('topgifter')"><i class="fa-solid fa-copy"></i> Copy URL</button>
+            <button class="btn btn-sm" style="background:var(--red);color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;margin-left:4px" onclick="resetTopGifter()"><i class="fa-solid fa-rotate-left"></i> Reset</button>
+          </div>
+        </div>
+        <div class="overlay-section-body">
+          <div class="overlay-preview-frame"><div class="preview-label">LIVE PREVIEW</div><iframe id="preview-topgifter" class="overlay-iframe"></iframe></div>
+          <div class="overlay-size-hint">Recommended OBS size: <strong>500 x 420</strong> (bottom-center podium)</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ===== ADD-ONS PANEL ===== -->
+    <div class="panel" id="panel-addons">
+      <div class="addons-page">
+        <div class="addons-hero">
+          <div class="addons-hero-info">
+            <div class="addons-kicker"><i class="fa-solid fa-puzzle-piece"></i> Optional game modules</div>
+            <h2>Add-ons</h2>
+            <p>Install minigame packs without hardcoding them into the main app. Add-ons can provide overlays, Minecraft action presets, helper mods, and setup health checks.</p>
+          </div>
+          <div class="addons-hero-actions">
+            <input type="file" id="addon-install-file" accept=".zip" style="display:none;" onchange="installAddonFromInput(event)">
+            <button class="btn btn-primary" onclick="document.getElementById('addon-install-file').click()"><i class="fa-solid fa-file-zipper"></i> Install Add-on</button>
+            <button class="btn btn-ghost" onclick="loadAddons({force:true})"><i class="fa-solid fa-rotate"></i> Rescan</button>
+          </div>
+        </div>
+
+        <div class="addons-layout">
+          <section class="addons-list-card">
+            <div class="addons-section-title">
+              <div>
+                <h3><i class="fa-solid fa-box-open"></i> Installed Add-ons</h3>
+                <p class="form-hint">Bundled and user-installed add-ons live in <code>release/addons/</code>.</p>
+              </div>
+              <span class="badge" id="addons-count">0</span>
+            </div>
+            <div class="addons-grid" id="addons-grid">
+              <div class="addon-empty">Loading add-ons...</div>
+            </div>
+          </section>
+
+          <aside class="addon-detail-card" id="addon-detail-card">
+            <div class="addon-empty tall">
+              <i class="fa-solid fa-puzzle-piece"></i>
+              <span>Select an add-on to view setup, actions, overlays, and health.</span>
+            </div>
+          </aside>
+        </div>
+      </div>
     </div>
 
     <!-- ===== SONG PANEL ===== -->
@@ -668,7 +911,7 @@
             <section class="song-card">
               <div class="song-card-header">
                 <h3><i class="fa-solid fa-sliders"></i> Settings</h3>
-                <button class="btn btn-primary btn-sm" onclick="saveTtsConfig()"><i class="fa-solid fa-save"></i> Save</button>
+                <button class="btn btn-primary btn-sm" onclick="saveTtsConfig({showToast:true})"><i class="fa-solid fa-save"></i> Save</button>
               </div>
               <div class="song-form-grid">
                 <div class="form-group">
@@ -726,13 +969,13 @@
                 </div>
               </div>
               <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;">
-                <div style="flex:1;min-width:140px;padding:12px;background:var(--bg-secondary,rgba(255,255,255,.04));border-radius:8px;border:1px solid var(--border,rgba(255,255,255,.08));">
-                  <div style="font-weight:600;font-size:14px;margin-bottom:4px;">? Whisper</div>
+                <div style="flex:1;min-width:140px;padding:12px;background:var(--inset-bg);border-radius:8px;border:1px solid var(--border-default);">
+                  <div style="font-weight:600;font-size:14px;margin-bottom:4px;">🔉 Whisper</div>
                   <code style="font-size:12px;opacity:.8;">. *whisper* hello</code>
                   <div style="font-size:11px;opacity:.5;margin-top:4px;">Soft, slow, filtered</div>
                 </div>
-                <div style="flex:1;min-width:140px;padding:12px;background:var(--bg-secondary,rgba(255,255,255,.04));border-radius:8px;border:1px solid var(--border,rgba(255,255,255,.08));">
-                  <div style="font-weight:600;font-size:14px;margin-bottom:4px;">? Yell</div>
+                <div style="flex:1;min-width:140px;padding:12px;background:var(--inset-bg);border-radius:8px;border:1px solid var(--border-default);">
+                  <div style="font-weight:600;font-size:14px;margin-bottom:4px;">📢 Yell</div>
                   <code style="font-size:12px;opacity:.8;">. [yell] come here</code>
                   <div style="font-size:11px;opacity:.5;margin-top:4px;">Loud, fast, compressed</div>
                 </div>
@@ -795,6 +1038,104 @@
 <!-- ===== TOAST CONTAINER ===== -->
 <div class="toast-container" id="toast-container"></div>
 
+<!-- ===== COIN GOAL MODAL ===== -->
+<div class="modal-overlay" id="coingoal-modal">
+  <div class="modal-box" style="max-width:440px;">
+    <div class="modal-header">
+      <h3><i class="fa-solid fa-jar"></i> Customize Coin Jar</h3>
+      <button class="modal-close" onclick="closeCoinGoalModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Jar Label</label>
+        <textarea id="cg-modal-label" placeholder="e.g. Tip Jar, Vacation Fund" maxlength="40" rows="2" style="width:100%;resize:vertical;padding:8px;border-radius:6px;border:1px solid var(--border-default);background:var(--bg-input);color:var(--text-primary);font-size:13px;font-family:inherit;"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Sub Label <span style="font-size:11px;font-weight:400;opacity:0.7;">(small text under the counter, optional)</span></label>
+        <textarea id="cg-modal-sublabel" placeholder="e.g. Help me hit the goal!" maxlength="60" rows="2" style="width:100%;resize:vertical;padding:8px;border-radius:6px;border:1px solid var(--border-default);background:var(--bg-input);color:var(--text-primary);font-size:13px;font-family:inherit;"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Coin Goal</label>
+        <input type="number" id="cg-modal-goal" placeholder="10000" min="1">
+      </div>
+      <div class="form-group">
+        <label>Current Coins <span style="font-size:11px;font-weight:400;opacity:0.7;">(set the exact total)</span></label>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <input type="number" id="cg-modal-current" placeholder="0" min="0" style="flex:1;">
+          <button class="btn btn-secondary btn-sm" onclick="saveCoinGoal('set')" title="Set to this exact value"><i class="fa-solid fa-check"></i> Set</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Quick Adjust <span style="font-size:11px;font-weight:400;opacity:0.7;">(add or subtract from current)</span></label>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <input type="number" id="cg-modal-adjust" placeholder="e.g. 200 or -50" style="flex:1;">
+          <button class="btn btn-secondary btn-sm" onclick="adjustCoinGoal()" title="Add/subtract this amount"><i class="fa-solid fa-plus-minus"></i> Apply</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" onclick="resetCoinGoal()" title="Reset current coins to 0"><i class="fa-solid fa-rotate-left"></i> Reset to 0</button>
+      <div style="flex:1;"></div>
+      <button class="btn btn-ghost btn-sm" onclick="closeCoinGoalModal()">Close</button>
+      <button class="btn btn-primary btn-sm" onclick="saveCoinGoal('save')"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== GIFT GOAL MODAL ===== -->
+<div class="modal-overlay" id="giftgoal-modal">
+  <div class="modal-box" style="max-width:440px;">
+    <div class="modal-header">
+      <h3><i class="fa-solid fa-bullseye"></i> Customize Gift Goal</h3>
+      <button class="modal-close" onclick="closeGiftGoalModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Header Text</label>
+        <input type="text" id="gg-modal-header" placeholder="e.g. Goal Today, Rose Hunt" maxlength="40" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border-default);background:var(--bg-input);color:var(--text-primary);font-size:13px;">
+      </div>
+      <div class="form-group">
+        <label>Select Gift</label>
+        <input type="hidden" id="gg-modal-gift-id">
+        <input type="hidden" id="gg-modal-gift-name">
+        <input type="hidden" id="gg-modal-gift-icon">
+        <div class="gg-selected-gift" id="gg-selected-gift">
+          <div class="gg-selected-gift-icon"><i class="fa-solid fa-gift"></i></div>
+          <div class="gg-selected-gift-info">
+            <div class="gg-selected-gift-name">No gift selected</div>
+            <div class="gg-selected-gift-meta">Pick one from the list below</div>
+          </div>
+        </div>
+        <div class="gg-picker-toolbar">
+          <input type="text" id="gg-gift-search" class="gg-picker-search" placeholder="Search gift name or ID..." autocomplete="off" oninput="renderGiftGoalGiftPicker()">
+          <select id="gg-gift-sort" class="gg-picker-sort" onchange="renderGiftGoalGiftPicker()">
+            <option value="az">A-Z</option>
+            <option value="za">Z-A</option>
+            <option value="coins_low">Coins ↑</option>
+            <option value="coins_high">Coins ↓</option>
+          </select>
+        </div>
+        <div id="gg-gift-list" class="gg-gift-list"><div class="gg-gift-empty">Loading gifts...</div></div>
+        <div class="form-hint" style="margin-top:4px;">Gifts load from the available gifts list. Connect to TikTok first to populate.</div>
+      </div>
+      <div class="form-group">
+        <label>Gift Goal Count</label>
+        <input type="number" id="gg-modal-goal" placeholder="100" min="1">
+      </div>
+      <div class="form-group">
+        <label>Current Count <span style="font-size:11px;font-weight:400;opacity:0.7;">(set manually, or it auto-increments on gifts)</span></label>
+        <input type="number" id="gg-modal-current" placeholder="0" min="0">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" onclick="resetGiftGoal()"><i class="fa-solid fa-rotate-left"></i> Reset to 0</button>
+      <div style="flex:1;"></div>
+      <button class="btn btn-ghost btn-sm" onclick="closeGiftGoalModal()">Close</button>
+      <button class="btn btn-primary btn-sm" onclick="saveGiftGoal()"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== GIFT MODAL ===== -->
 <div class="modal-overlay" id="gift-modal">
   <div class="modal-box">
@@ -835,6 +1176,21 @@
       <div class="form-group">
         <label>Description</label>
         <textarea id="modal-gift-description" placeholder="Describe what this gift does, what commands it triggers, etc." style="width:100%;min-height:60px;resize:vertical;padding:8px;border-radius:6px;border:1px solid var(--border-default);background:var(--bg-input);color:var(--text-primary);font-size:13px;"></textarea>
+      </div>
+      <div class="form-group" id="streak-delta-checkbox-row" style="margin:4px 0 8px;">
+        <label style="display:flex;align-items:flex-start;gap:12px;padding:8px 0;cursor:pointer;">
+          <span class="eb-toggle" style="flex-shrink:0;">
+            <input type="checkbox" id="modal-gift-streak-delta">
+            <span class="eb-toggle-slider"></span>
+          </span>
+          <div>
+            <span style="font-weight:600;font-size:13px;">Process immediately (streak delta)</span>
+            <p class="form-hint" style="margin:2px 0 0 0;font-size:11px;line-height:1.3;">
+              Default: waits for the gift combo to finish before triggering.<br>
+              Check this to process each combo chunk immediately instead.
+            </p>
+          </div>
+        </label>
       </div>
       <div class="form-group">
         <label>Actions</label>
@@ -989,6 +1345,7 @@
   </div>
 </div>
 
-<script src="/static/script.js?v=19"></script>
+<script src="/static/overlay_previews.js?v=1"></script>
+<script src="/static/script.js?v=29"></script>
 </body>
 </html>

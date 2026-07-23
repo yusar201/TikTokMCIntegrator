@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TikTokMC — Design Options</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background: #0a0a0f;
+  color: #e0e0e8;
+  font-family: 'Inter', sans-serif;
+  padding: 40px 24px;
+}
+h1 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  color: #f0f0f8;
+  margin-bottom: 8px;
+}
+.subtitle {
+  color: #8888a0;
+  font-size: 15px;
+  margin-bottom: 32px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  max-width: 1400px;
+}
+
+/* ── Card wrapper for each design ── */
+.design-card {
+  border-radius: 16px;
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.design-card:hover {
+  transform: translateY(-4px);
+}
+.card-header {
+  padding: 16px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.card-header h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+.card-header .tag {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 999px;
+  letter-spacing: 0.3px;
+}
+.preview {
+  padding: 20px;
+  min-height: 420px;
+}
+
+/* ════════════════════════
+   DESIGN 1 — LINEAR
+   ════════════════════════ */
+.design-linear {
+  background: #0f1011;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.design-linear .card-header {
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.design-linear .card-header h2 { color: #f7f8f8; }
+.design-linear .tag { background: #5e6ad2; color: #fff; }
+.design-linear .preview {
+  font-family: 'Inter', sans-serif;
+}
+.design-linear .stat-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.design-linear .stat-box {
+  flex: 1;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 14px;
+}
+.design-linear .stat-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #8a8f98;
+  letter-spacing: 0.2px;
+  margin-bottom: 6px;
+}
+.design-linear .stat-value {
+  font-size: 24px;
+  font-weight: 510;
+  color: #f7f8f8;
+  letter-spacing: -0.3px;
+  font-variation-settings: 'wght' 510;
+}
+.design-linear .stat-change {
+  font-size: 11px;
+  color: #10b981;
+  margin-top: 4px;
+}
+.design-linear .section-title {
+  font-size: 13px;
+  font-weight: 510;
+  color: #d0d6e0;
+  margin-bottom: 10px;
+  font-variation-settings: 'wght' 510;
+  letter-spacing: 0.3px;
+}
+.design-linear .song-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.05);
+  margin-bottom: 6px;
+}
+.design-linear .song-item .thumb {
+  width: 32px; height: 32px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #5e6ad2, #7170ff);
+}
+.design-linear .song-item .info { flex: 1; }
+.design-linear .song-item .title {
+  font-size: 13px; font-weight: 510; color: #f7f8f8;
+}
+.design-linear .song-item .artist {
+  font-size: 11px; color: #8a8f98;
+}
+.design-linear .btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 510;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.02);
+  color: #d0d6e0;
+  cursor: default;
+}
+.design-linear .btn-primary {
+  background: #5e6ad2; color: #fff; border-color: #5e6ad2;
+}
+.design-linear .sidebar-mini {
+  display: flex; gap: 4px; margin-bottom: 16px;
+  padding: 4px; border-radius: 6px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.05);
+}
+.design-linear .sidebar-mini .item {
+  padding: 6px 10px; border-radius: 4px; font-size: 12px; color: #8a8f98;
+  font-weight: 510; cursor: default;
+}
+.design-linear .sidebar-mini .item.active {
+  background: rgba(255,255,255,0.04); color: #f7f8f8;
+}
+
+/* ════════════════════════
+   DESIGN 2 — SUPABASE
+   ════════════════════════ */
+.design-supabase {
+  background: #171717;
+  border: 1px solid #2e2e2e;
+}
+.design-supabase .card-header {
+  border-bottom: 1px solid #242424;
+}
+.design-supabase .card-header h2 { color: #fafafa; font-family: 'DM Sans', sans-serif; }
+.design-supabase .tag { background: #3ecf8e; color: #0f0f0f; font-family: 'DM Sans', sans-serif; }
+.design-supabase .preview {
+  font-family: 'DM Sans', 'Inter', sans-serif;
+}
+.design-supabase .stat-row {
+  display: flex; gap: 12px; margin-bottom: 16px;
+}
+.design-supabase .stat-box {
+  flex: 1;
+  background: #0f0f0f;
+  border: 1px solid #2e2e2e;
+  border-radius: 12px;
+  padding: 14px;
+}
+.design-supabase .stat-label {
+  font-size: 12px; font-weight: 500; color: #898989;
+  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
+}
+.design-supabase .stat-value {
+  font-size: 26px; font-weight: 600; color: #fafafa;
+  letter-spacing: -0.5px;
+}
+.design-supabase .stat-change {
+  font-size: 11px; color: #3ecf8e; margin-top: 4px;
+  font-weight: 500;
+}
+.design-supabase .section-title {
+  font-size: 12px; font-weight: 500; color: #b4b4b4;
+  text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 10px;
+}
+.design-supabase .song-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px; border-radius: 8px;
+  background: #0f0f0f;
+  border: 1px solid #2e2e2e;
+  margin-bottom: 6px;
+}
+.design-supabase .song-item .thumb {
+  width: 32px; height: 32px; border-radius: 6px;
+  background: linear-gradient(135deg, #3ecf8e, #00c573);
+}
+.design-supabase .song-item .info { flex: 1; }
+.design-supabase .song-item .title {
+  font-size: 13px; font-weight: 500; color: #fafafa;
+}
+.design-supabase .song-item .artist {
+  font-size: 11px; color: #898989;
+}
+.design-supabase .btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 500;
+  border: 1px solid #2e2e2e;
+  background: transparent;
+  color: #b4b4b4;
+  cursor: default;
+}
+.design-supabase .btn-primary {
+  background: #0f0f0f; color: #fafafa;
+  border: 1px solid #3ecf8e; border-radius: 999px;
+  padding: 6px 20px;
+}
+.design-supabase .nav-mini {
+  display: flex; gap: 2px; margin-bottom: 16px;
+  background: #0f0f0f;
+  padding: 4px; border-radius: 999px;
+}
+.design-supabase .nav-mini .item {
+  padding: 6px 14px; border-radius: 999px; font-size: 12px; color: #898989;
+  font-weight: 500; cursor: default;
+}
+.design-supabase .nav-mini .item.active {
+  background: #171717; color: #fafafa;
+}
+
+/* ════════════════════════
+   DESIGN 3 — RAYCAST
+   ════════════════════════ */
+.design-raycast {
+  background: #101111;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.design-raycast .card-header {
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.design-raycast .card-header h2 { color: #ffffff; }
+.design-raycast .tag { background: #FF6363; color: #fff; }
+.design-raycast .preview {
+  font-family: 'Inter', sans-serif;
+}
+.design-raycast .stat-row {
+  display: flex; gap: 12px; margin-bottom: 16px;
+}
+.design-raycast .stat-box {
+  flex: 1;
+  background: #07080a;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: rgb(27,28,30) 0px 0px 0px 1px, rgb(7,8,10) 0px 0px 0px 1px inset;
+}
+.design-raycast .stat-label {
+  font-size: 12px; font-weight: 500; color: #9c9c9d;
+  letter-spacing: 0.3px; margin-bottom: 6px;
+}
+.design-raycast .stat-value {
+  font-size: 24px; font-weight: 600; color: #f9f9f9;
+}
+.design-raycast .stat-change {
+  font-size: 11px; color: #5fc992; margin-top: 4px;
+  font-weight: 500;
+}
+.design-raycast .section-title {
+  font-size: 12px; font-weight: 600; color: #cecece;
+  letter-spacing: 0.4px; margin-bottom: 10px;
+  text-transform: uppercase;
+}
+.design-raycast .song-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 8px;
+  background: #07080a;
+  border: 1px solid rgba(255,255,255,0.06);
+  box-shadow: rgb(27,28,30) 0px 0px 0px 1px inset;
+  margin-bottom: 6px;
+}
+.design-raycast .song-item .thumb {
+  width: 32px; height: 32px; border-radius: 6px;
+  background: linear-gradient(135deg, #FF6363, #ff8a8a);
+}
+.design-raycast .song-item .info { flex: 1; }
+.design-raycast .song-item .title {
+  font-size: 13px; font-weight: 500; color: #f9f9f9;
+}
+.design-raycast .song-item .artist {
+  font-size: 11px; color: #9c9c9d;
+}
+.design-raycast .btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 500;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: transparent;
+  color: #9c9c9d;
+  box-shadow: rgba(255,255,255,0.05) 0px 1px 0px 0px inset;
+  cursor: default;
+}
+.design-raycast .btn-primary {
+  background: rgba(255,255,255,0.9);
+  color: #18191a;
+  border: none;
+  border-radius: 86px;
+  padding: 6px 20px;
+  font-weight: 600;
+  box-shadow: rgba(255,255,255,0.05) 0px 1px 0px 0px inset, rgba(255,255,255,0.25) 0px 0px 0px 1px;
+}
+.design-raycast .sidebar-mini {
+  display: flex; gap: 2px; margin-bottom: 16px;
+  background: #07080a;
+  padding: 4px; border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.04);
+}
+.design-raycast .sidebar-mini .item {
+  padding: 6px 12px; border-radius: 6px; font-size: 12px; color: #6a6b6c;
+  font-weight: 500; cursor: default;
+}
+.design-raycast .sidebar-mini .item.active {
+  background: rgba(255,255,255,0.05); color: #f9f9f9;
+  box-shadow: rgba(255,255,255,0.05) 0px 1px 0px 0px inset;
+}
+
+/* ── Features list ── */
+.features {
+  margin-top: 40px;
+  max-width: 1400px;
+}
+.features h3 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 18px;
+  font-weight: 600;
+  color: #f0f0f8;
+  margin-bottom: 16px;
+}
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+.feature-item {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px;
+  padding: 16px;
+}
+.feature-item h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e0e0e8;
+  margin-bottom: 4px;
+}
+.feature-item p {
+  font-size: 13px;
+  color: #8888a0;
+  line-height: 1.5;
+}
+</style>
+</head>
+<body>
+
+<h1>🎨 TikTokMC — Design Directions</h1>
+<p class="subtitle">Three visual styles for your streamer dashboard. Hover to preview.</p>
+
+<div class="grid">
+
+  <!-- LINEAR -->
+  <div class="design-card design-linear">
+    <div class="card-header">
+      <h2>Linear</h2>
+      <span class="tag">Ultra-minimal · Indigo</span>
+    </div>
+    <div class="preview">
+      <div class="sidebar-mini">
+        <span class="item active">Dashboard</span>
+        <span class="item">Events</span>
+        <span class="item">Song</span>
+        <span class="item">TTS</span>
+        <span class="item">⚙️</span>
+      </div>
+      <div class="stat-row">
+        <div class="stat-box">
+          <div class="stat-label">STREAM STATUS</div>
+          <div class="stat-value">● Live</div>
+          <div class="stat-change">Viewers: 147</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">QUEUE</div>
+          <div class="stat-value">3</div>
+          <div class="stat-change">2 pending</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">GIFTS</div>
+          <div class="stat-value">$42</div>
+          <div class="stat-change">+12 today</div>
+        </div>
+      </div>
+      <div class="section-title">Now Playing</div>
+      <div class="song-item">
+        <div class="thumb"></div>
+        <div class="info">
+          <div class="title">Blinding Lights</div>
+          <div class="artist">The Weeknd</div>
+        </div>
+        <span class="btn btn-primary">⏭</span>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:12px;">
+        <span class="btn">!play song name</span>
+        <span class="btn">!skip</span>
+        <span class="btn">!revoke</span>
+      </div>
+      <div style="margin-top:14px;display:flex;gap:6px;flex-wrap:wrap;">
+        <span class="btn" style="border-color:rgba(94,106,210,0.3);color:#7170ff;">🎤 masboyae_</span>
+        <span class="btn">🔴 00:42:15</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SUPABASE -->
+  <div class="design-card design-supabase">
+    <div class="card-header">
+      <h2>Supabase</h2>
+      <span class="tag">Dev-first · Emerald</span>
+    </div>
+    <div class="preview">
+      <div class="nav-mini">
+        <span class="item active">Dashboard</span>
+        <span class="item">Events</span>
+        <span class="item">Song</span>
+        <span class="item">TTS</span>
+      </div>
+      <div class="stat-row">
+        <div class="stat-box">
+          <div class="stat-label">Stream</div>
+          <div class="stat-value">● Live</div>
+          <div class="stat-change">147 viewers</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Queue</div>
+          <div class="stat-value">3</div>
+          <div class="stat-change">2 pending</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Gifts</div>
+          <div class="stat-value">$42</div>
+          <div class="stat-change">+12 today</div>
+        </div>
+      </div>
+      <div class="section-title">Now Playing</div>
+      <div class="song-item">
+        <div class="thumb"></div>
+        <div class="info">
+          <div class="title">Blinding Lights</div>
+          <div class="artist">The Weeknd</div>
+        </div>
+        <span class="btn btn-primary">Skip</span>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:12px;">
+        <span class="btn">!play song name</span>
+        <span class="btn">!skip</span>
+        <span class="btn">!revoke</span>
+      </div>
+      <div style="margin-top:14px;display:flex;gap:6px;flex-wrap:wrap;">
+        <span class="btn" style="border-color:rgba(62,207,142,0.4);color:#3ecf8e;">🎤 masboyae_</span>
+        <span class="btn">42:15 elapsed</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- RAYCAST -->
+  <div class="design-card design-raycast">
+    <div class="card-header">
+      <h2>Raycast</h2>
+      <span class="tag">Sleek · Red Accent</span>
+    </div>
+    <div class="preview">
+      <div class="sidebar-mini">
+        <span class="item active">Dashboard</span>
+        <span class="item">Events</span>
+        <span class="item">Song</span>
+        <span class="item">TTS</span>
+        <span class="item">⚙️</span>
+      </div>
+      <div class="stat-row">
+        <div class="stat-box">
+          <div class="stat-label">STREAM</div>
+          <div class="stat-value">● Live</div>
+          <div class="stat-change">147 viewers</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">QUEUE</div>
+          <div class="stat-value">3</div>
+          <div class="stat-change">2 pending</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">GIFTS</div>
+          <div class="stat-value">$42</div>
+          <div class="stat-change">+12 today</div>
+        </div>
+      </div>
+      <div class="section-title">Now Playing</div>
+      <div class="song-item">
+        <div class="thumb"></div>
+        <div class="info">
+          <div class="title">Blinding Lights</div>
+          <div class="artist">The Weeknd</div>
+        </div>
+        <span class="btn btn-primary">⏭</span>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:12px;">
+        <span class="btn">!play song name</span>
+        <span class="btn">!skip</span>
+        <span class="btn">!revoke</span>
+      </div>
+      <div style="margin-top:14px;display:flex;gap:6px;flex-wrap:wrap;">
+        <span class="btn" style="border-color:rgba(255,99,99,0.3);color:#FF6363;">🎤 masboyae_</span>
+        <span class="btn">42:15</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="features">
+  <h3>What each brings</h3>
+  <div class="feature-grid">
+    <div class="feature-item">
+      <h4>Linear</h4>
+      <p>Ultra-premium dark mode. Inter 510 weight, indigo accent, translucent surfaces. Feels like a $1B startup's internal dashboard. Recommended if you want it to look <strong>expensive</strong>.</p>
+    </div>
+    <div class="feature-item">
+      <h4>Supabase</h4>
+      <p>Developer-tool aesthetic with emerald green identity. High-contrast borders, pill-shaped CTAs, data-dense layouts. Feels like a <strong>professional dev tool</strong>.</p>
+    </div>
+    <div class="feature-item">
+      <h4>Raycast</h4>
+      <p>macOS-native dark chrome with red accent, multi-layer shadows (inset + outer), vibrant glow effects. Feels like a <strong>premium desktop app</strong>.</p>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

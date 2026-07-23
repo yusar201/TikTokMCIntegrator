@@ -290,9 +290,18 @@ Rcon:
   Password: YOUR_RCON_PASSWORD
   Port: 25575
 Settings:
+  ConnectorType: rcon
   EulerApiKey: YOUR_EULER_API_KEY
   MinecraftUsername: YOUR_MINECRAFT_USERNAME
   TikTokUsername: YOUR_TIKTOK_USERNAME
+Forge:
+  Host: 127.0.0.1
+  Password: ""
+  Port: 5942
+ServerTap:
+  ApiKey: YOUR_API_KEY
+  Host: 127.0.0.1
+  Port: 4567
 StreakDeltaGifts:
 - '5827'
 VIP_List:

@@ -66,6 +66,9 @@ html, body {
   max-height: 100vh;
   padding: 16px;
   gap: 4px;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
 }
 
 /* ========== CHAT ENTRY ========== */
@@ -218,18 +221,33 @@ html, body {
   to { box-shadow: 0 0 20px rgba(237,66,69,0.4); }
 }
 
-/* ========== FOLLOW ENTRY ========== */
+/* ========== FOLLOW ENTRY (matches gift feed card language) ========== */
 .follow-entry {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px;
-  background: var(--bg-surface);
+  width: 360px;
+  min-height: 64px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: rgba(11,13,20,0.94);
   border-radius: 10px;
+  border: none;
   border-left: 3px solid var(--tiktok-cyan);
   animation: followSlideIn 0.4s ease-out;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  position: relative;
+  z-index: 0;
+  overflow: visible;
+}
+.follow-entry::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(0,242,234,0.18), rgba(255,0,79,0.08) 62%, transparent);
 }
 @keyframes followSlideIn {
   from { opacity:0; transform: translateX(40px) scale(0.95); }
@@ -237,28 +255,31 @@ html, body {
 }
 
 .follow-avatar {
-  width: 36px; height: 36px;
-  border-radius: 50%;
-  background: var(--bg-elevated);
+  width: 44px; height: 44px;
+  flex: 0 0 44px;
+  border-radius: 0;
+  box-sizing: border-box;
+  padding: 4px;
+  background: #1d1d1d;
   display: flex; align-items: center; justify-content: center;
   overflow: hidden; flex-shrink: 0;
-  border: 2px solid var(--tiktok-cyan);
+  border: 2px solid #000;
+  image-rendering: pixelated;
+  box-shadow: inset 2px 2px 0 0 #545454, inset -2px -2px 0 0 #2b2b2b;
 }
-.follow-avatar img { width:100%; height:100%; object-fit:cover; }
-.follow-avatar i { color: var(--tiktok-cyan); font-size: 14px; }
-.follow-info { flex:1; min-width:0; }
-.follow-nick { font-weight: 600; font-size: 14px; }
-.follow-id { font-size: 11px; color: var(--text-secondary); }
-.follow-badge {
-  background: var(--tiktok-cyan);
-  color: #000;
-  font-size: 10px;
-  font-weight: 800;
-  padding: 3px 10px;
-  border-radius: 12px;
-  letter-spacing: 0.5px;
-  flex-shrink: 0;
+.follow-avatar img {
+  width:100%; height:100%; object-fit:contain; object-position:center center;
+  min-width:100%; max-width:100%; flex:0 0 100%; aspect-ratio:1 / 1;
+  display:block; border-radius:0; image-rendering:pixelated;
 }
+.follow-avatar i {
+  width:100%; height:100%; display:flex; align-items:center; justify-content:center;
+  color: #55ffff; font-size: 16px; text-shadow: 1px 1px 0 #003f3f;
+}
+.follow-info { flex:1; min-width:0; overflow:visible; }
+.follow-nick { font-weight: 600; font-size: 11px; line-height:1.25; color: #f1f5f9; white-space:normal; overflow:visible; overflow-wrap:anywhere; }
+.follow-id { font-size: 9px; line-height:1.25; color: #94a3b8; margin-top: 3px; white-space:normal; overflow:visible; overflow-wrap:anywhere; }
+.follow-badge { display:none; }
 
 /* ========== SUPERFAN ANNOUNCEMENT ========== */
 .superfan-overlay {
@@ -454,6 +475,307 @@ html, body {
 @keyframes tgBurstFade { 0%{opacity:1} 100%{opacity:0} }
 .tg-burst-p { position:absolute; border-radius:50%; top:50%; left:50%; }
 .tg-wrap { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10; pointer-events:none; }
+.ts-wrap { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10; pointer-events:none; }
+
+/* ============ TOP GIFTER PODIUM (Stardew Valley Design) ============ */
+:root {
+  --gold-p: #e5a93b; --gold-d: #9e661b; --gold-l: #f7d57c;
+  --stone-p: #a3a7b2; --stone-d: #646872; --stone-l: #d1d5e0;
+  --wood-p: #aa6f46; --wood-d: #6d3b19; --wood-l: #cf9b74;
+  --border-dark: #311405;
+  --font-pixel: 'Press Start 2P', monospace;
+  --netherite-base: #444a52; --netherite-grid: #2a2e33; --netherite-light: #59606a; --netherite-border: #1a1d20;
+  --diamond-base: #5dd3d7; --diamond-grid: #2e8a93; --diamond-light: #7edee1; --diamond-border: #1e5e68;
+  --goldblock-base: #fcee4d; --goldblock-grid: #b88115; --goldblock-light: #fde756; --goldblock-border: #8a6510;
+}
+.podium-wrap { position:fixed; bottom:30px; left:50%; transform:translateX(-50%); pointer-events:none; z-index:10; opacity:0; transition:opacity 0.5s ease; display:flex; flex-direction:column; align-items:center; gap:14px; }
+.podium-wrap.visible { opacity:1; }
+.podium-banner { background:#f3cca1; border:4px solid var(--border-dark); padding:10px 28px; transform:skew(-2deg); box-shadow:0 6px 0 rgba(0,0,0,0.3); position:relative; }
+.podium-banner::before,.podium-banner::after { content:''; position:absolute; top:50%; z-index:-1; width:16px; height:80%; background:#dca373; border:3px solid var(--border-dark); }
+.podium-banner::before { left:-20px; transform:translateY(-50%) skewY(10deg); }
+.podium-banner::after { right:-20px; transform:translateY(-50%) skewY(-10deg); }
+.podium-banner-text { font-family:var(--font-pixel); font-size:14px; color:#b52a1c; letter-spacing:1px; margin:0; text-shadow:1px 1px 0 #fff,-1px -1px 0 #fff,2px 2px 0 #5c1109; }
+.podium-stage { display:flex; align-items:flex-end; justify-content:center; gap:12px; }
+.column-wrapper { display:flex; flex-direction:column; align-items:center; position:relative; animation:podiumSlide 0.6s cubic-bezier(0.34,1.56,0.64,1) both; }
+.column-wrapper:nth-child(1) { animation-delay:0.08s; }
+.column-wrapper:nth-child(2) { animation-delay:0s; }
+.column-wrapper:nth-child(3) { animation-delay:0.16s; }
+@keyframes podiumSlide { from{opacity:0;transform:translateY(30px)} to{opacity:1;transform:translateY(0)} }
+.crown-container { margin-bottom:8px; filter:drop-shadow(3px 3px 0 rgba(0,0,0,0.4)); animation:crownBob 2s ease-in-out infinite; }
+@keyframes crownBob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
+.avatar-frame { width:80px; height:80px; overflow:hidden; background:#111; box-sizing:border-box; box-shadow:0 6px 0 rgba(0,0,0,0.4); }
+.avatar-frame.rank-2,.avatar-frame.rank-3 { width:72px; height:72px; }
+.avatar-frame img { width:100%; height:100%; object-fit:cover; image-rendering:pixelated; }
+.avatar-fallback { width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:700;color:#f3cca1;font-family:var(--font-pixel);background:#1a0e06;text-shadow:2px 2px 0 #000; }
+.frame-1st { border:6px solid var(--netherite-border); outline:4px solid var(--netherite-light); }
+.frame-2nd { border:6px solid var(--diamond-border); outline:4px solid var(--diamond-light); }
+.frame-3rd { border:6px solid var(--goldblock-border); outline:4px solid var(--goldblock-light); }
+.podium-username { font-family:var(--font-pixel); font-size:10px; color:#fff; margin:8px 0 4px; max-width:140px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:center; text-shadow:2px 2px 0 #000,-1px -1px 0 #000; }
+.score-badge { display:flex; align-items:center; gap:4px; background:rgba(0,0,0,0.65); padding:5px 10px; margin-bottom:8px; border:2px solid var(--border-dark); font-family:var(--font-pixel); font-size:9px; color:#ffeb54; }
+.score-star { color:#ffca00; font-size:10px; text-shadow:1px 1px 0 #000; }
+.podium-block { border:3px solid var(--border-dark); width:120px; position:relative; display:flex; flex-direction:column; justify-content:flex-start; align-items:center; padding-top:14px; box-sizing:border-box; }
+.podium-1st { height:140px; background-color:var(--netherite-base); background-image:repeating-linear-gradient(90deg,var(--netherite-grid) 0px,var(--netherite-grid) 2px,transparent 2px,transparent 30px),repeating-linear-gradient(0deg,var(--netherite-grid) 0px,var(--netherite-grid) 2px,transparent 2px,transparent 30px),repeating-linear-gradient(45deg,#3d434a 0px,#3d434a 4px,#4a5058 4px,#4a5058 8px); box-shadow:inset 0 6px 0 var(--netherite-light),inset 0 -4px 0 var(--netherite-grid),0 8px 0 rgba(0,0,0,0.4); border:3px solid var(--netherite-border); image-rendering:pixelated; }
+.podium-2nd { height:100px; background-color:var(--diamond-base); background-image:repeating-linear-gradient(90deg,var(--diamond-grid) 0px,var(--diamond-grid) 2px,transparent 2px,transparent 30px),repeating-linear-gradient(0deg,var(--diamond-grid) 0px,var(--diamond-grid) 2px,transparent 2px,transparent 30px),repeating-linear-gradient(45deg,#4bbcc4 0px,#4bbcc4 4px,#6edde1 4px,#6edde1 8px); box-shadow:inset 0 6px 0 var(--diamond-light),inset 0 -4px 0 var(--diamond-grid),0 8px 0 rgba(0,0,0,0.3); border:3px solid var(--diamond-border); image-rendering:pixelated; }
+.podium-3rd { height:70px; background-color:var(--goldblock-base); background-image:repeating-linear-gradient(90deg,var(--goldblock-grid) 0px,var(--goldblock-grid) 2px,transparent 2px,transparent 30px),repeating-linear-gradient(0deg,var(--goldblock-grid) 0px,var(--goldblock-grid) 2px,transparent 2px,transparent 30px),repeating-linear-gradient(45deg,#e6c938 0px,#e6c938 4px,#f9d939 4px,#f9d939 8px); box-shadow:inset 0 6px 0 var(--goldblock-light),inset 0 -4px 0 var(--goldblock-grid),0 8px 0 rgba(0,0,0,0.3); border:3px solid var(--goldblock-border); image-rendering:pixelated; }
+.plaque { border:2px solid var(--border-dark); box-shadow:inset -2px -2px 0 rgba(0,0,0,0.25),inset 2px 2px 0 rgba(255,255,255,0.15); font-family:var(--font-pixel); font-size:9px; padding:5px 10px; text-align:center; }
+.podium-1st .plaque { background:var(--netherite-light); color:#c8d0d8; }
+.podium-2nd .plaque { background:var(--diamond-light); color:var(--diamond-border); }
+.podium-3rd .plaque { background:var(--goldblock-light); color:var(--goldblock-border); }
+.pulse .podium-username { animation:namePulse 0.5s ease-out; }
+@keyframes namePulse { 0%{transform:scale(1)} 50%{transform:scale(1.12);color:#fbbf24} 100%{transform:scale(1)} }
+/* ===== END TOP GIFTER ===== */
+
+/* ============ GIFT GOAL OVERLAY ============ */
+.gg-wrap {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mc), var(--font-heading), sans-serif;
+  display: none; /* hidden until data arrives */
+  pointer-events: none;
+}
+.gg-header,
+.gg-progress,
+.gg-current,
+.gg-goal {
+  font-family: var(--font-mc), var(--font-heading), sans-serif !important;
+  font-weight: 900 !important;
+  text-align: center;
+  white-space: nowrap;
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+  -webkit-text-stroke: 0 transparent;
+  text-shadow: 1px 1px 0 rgba(0,0,0,0.85) !important;
+}
+.gg-header {
+  order: 1;
+  position: relative;
+  z-index: 3;
+  margin-bottom: -10px; /* sits where the old counter floated */
+  font-size: 13px;
+  line-height: 1.05;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #fff;
+  max-width: 150px;
+  overflow-wrap: break-word;
+  white-space: normal;
+}
+.gg-icon-wrap {
+  order: 2;
+  position: relative;
+  width: 86px;
+  height: 86px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.gg-icon, .gg-icon-ph {
+  width: 86px;
+  height: 86px;
+  border-radius: 12px;
+  object-fit: contain;
+  filter: drop-shadow(0 5px 10px rgba(0,0,0,0.55));
+}
+.gg-icon-ph {
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  color: var(--text-muted);
+}
+.gg-anim-canvas, .gg-anim-video {
+  width: 128px;
+  height: 128px;
+  object-fit: contain;
+  display: block;
+  image-rendering: auto;
+  background: transparent;
+  filter: drop-shadow(0 5px 12px rgba(0,0,0,0.58));
+}
+.gg-wrap.gg-has-anim .gg-icon-wrap {
+  width: 128px;
+  height: 128px;
+  overflow: hidden;
+}
+.gg-progress {
+  order: 3;
+  position: static;
+  transform: none;
+  margin-top: 2px;
+  font-size: 16px;
+  line-height: 1;
+  color: #fff;
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  backdrop-filter: none;
+}
+.gg-current { color: #fff; }
+.gg-goal { color: #fff; }
+
+
+/* ============ ONEBLOCK STATUS OVERLAY (Stardew Pixel) ============ */
+.ob-wrap {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  display: none;
+  pointer-events: none;
+  font-family: 'Pixelify Sans', var(--font-mc), monospace;
+}
+.ob-wrap.ob-visible { display: block; }
+.ob-card {
+  width: 322px;
+  color: #fff3c4;
+  background:
+    linear-gradient(180deg, rgba(255,243,196,.08), rgba(0,0,0,.08)),
+    #6b3f22;
+  border: 4px solid #3a2416;
+  box-shadow:
+    0 0 0 2px #b06f32,
+    6px 6px 0 #160d08,
+    inset 3px 3px 0 rgba(255,255,255,.12),
+    inset -3px -3px 0 rgba(0,0,0,.25);
+  image-rendering: pixelated;
+  padding: 10px 12px 12px;
+}
+.ob-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #f4c542;
+  text-shadow: 2px 2px 0 #160d08;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+.ob-title { font-size: 15px; }
+.ob-icon { font-size: 18px; line-height: 1; }
+.ob-phase-label {
+  margin-top: 8px;
+  font-size: 9px;
+  color: #d7b46a;
+  text-shadow: 1px 1px 0 #160d08;
+  letter-spacing: 1px;
+}
+.ob-phase {
+  margin-top: 1px;
+  font-size: 22px;
+  line-height: 1;
+  color: #fff6cf;
+  text-shadow: 2px 2px 0 #160d08;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ob-progress-shell {
+  margin-top: 9px;
+  height: 18px;
+  background: #2c1a10;
+  border: 3px solid #160d08;
+  box-shadow: inset 2px 2px 0 rgba(0,0,0,.45), 0 2px 0 #b06f32;
+  overflow: hidden;
+}
+.ob-progress-fill {
+  width: 0%;
+  height: 100%;
+  background:
+    repeating-linear-gradient(90deg, rgba(255,255,255,.12) 0 6px, transparent 6px 12px),
+    linear-gradient(180deg, #73c850, #4f8f3a);
+  transition: width 420ms steps(8, end);
+}
+.ob-progress-text {
+  margin-top: 5px;
+  font-size: 12px;
+  color: #fff3c4;
+  text-shadow: 2px 2px 0 #160d08;
+  text-align: center;
+}
+.ob-stats {
+  margin-top: 9px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+.ob-stats div {
+  min-width: 0;
+  background: #4a2b18;
+  border: 2px solid #2a170d;
+  padding: 4px 6px;
+  box-shadow: inset 1px 1px 0 rgba(255,255,255,.10);
+}
+.ob-stat-block { grid-column: 1 / -1; }
+.ob-stats span {
+  display: block;
+  color: #d7b46a;
+  font-size: 9px;
+  line-height: 1;
+  text-shadow: 1px 1px 0 #160d08;
+}
+.ob-stats strong {
+  display: block;
+  margin-top: 2px;
+  color: #fff6cf;
+  font-size: 12px;
+  line-height: 1.15;
+  text-shadow: 1px 1px 0 #160d08;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* ============ END ONEBLOCK STATUS OVERLAY ============ */
+
+
+
+/* ===== CHAT PIXEL TIER RESTYLE BEGIN ===== */
+.chat-entry {
+  width: min(410px, 100%) !important;
+  min-height: 58px !important;
+  display: grid !important;
+  grid-template-columns: 42px minmax(0, 1fr) !important;
+  gap: 10px !important;
+  align-items: start !important;
+  padding: 8px 10px !important;
+  border-radius: 0 !important;
+  border: 2px solid #0b0f14 !important;
+  border-left: 5px solid #657282 !important;
+  background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(0,0,0,.08)), #232a31 !important;
+  box-shadow: 0 0 0 2px rgba(0,0,0,.72), inset 0 2px 0 rgba(255,255,255,.10), inset 0 -3px 0 rgba(0,0,0,.35), 4px 4px 0 rgba(0,0,0,.50) !important;
+  overflow: visible !important;
+}
+.chat-avatar {
+  width:42px !important; height:42px !important; padding:4px !important; border-radius:0 !important;
+  border:2px solid #0a0d10 !important; background:#111820 !important; color:#ffd766 !important;
+  font-family: var(--font-mc, monospace) !important; text-shadow:2px 2px 0 #000 !important;
+  box-shadow: inset 2px 2px 0 rgba(255,255,255,.08), inset -2px -2px 0 rgba(0,0,0,.50) !important;
+}
+.chat-avatar img { border-radius:0 !important; object-fit:cover !important; }
+.chat-body { min-width:0 !important; }
+.chat-nick, .tier-nick { color:#ffe58a !important; -webkit-text-fill-color:#ffe58a !important; background:none !important; animation:none !important; font-family: var(--font-mc, monospace) !important; font-size:10px !important; text-shadow:2px 2px 0 #000 !important; }
+.chat-text { color:#fff8df !important; font-family: var(--font-mc, monospace) !important; font-size:11px !important; line-height:1.45 !important; text-shadow:2px 2px 0 #000, 0 0 5px rgba(0,0,0,.65) !important; }
+.chat-tier-chip, .chat-badge { box-sizing:border-box !important; height:18px !important; min-width:64px !important; display:inline-flex !important; align-items:center !important; justify-content:center !important; border-radius:0 !important; font-family:var(--font-mc, monospace) !important; font-size:7px !important; line-height:1 !important; padding:3px 5px 2px !important; margin-left:4px !important; box-shadow:inset 1px 1px 0 rgba(255,255,255,.18), inset -1px -1px 0 rgba(0,0,0,.45) !important; text-shadow:1px 1px 0 #000 !important; }
+.chat-entry.tier-1 { border-left-color:#46e4f5 !important; background:linear-gradient(180deg, rgba(94,234,212,.10), rgba(0,0,0,.08)), #202b31 !important; }
+.chat-entry.tier-1 .chat-tier-chip { background:#12606b !important; color:#bdfcff !important; }
+.chat-entry.tier-1 .chat-nick, .chat-entry.tier-1 .tier-nick { color:#9ff8ff !important; -webkit-text-fill-color:#9ff8ff !important; }
+.chat-entry.tier-2 { border-left-color:#b37dff !important; background:linear-gradient(180deg, rgba(179,125,255,.14), rgba(66,28,91,.10)), #271f34 !important; box-shadow:0 0 0 2px rgba(0,0,0,.72), inset 0 2px 0 rgba(255,255,255,.10), inset 0 -3px 0 rgba(0,0,0,.35), 4px 4px 0 rgba(0,0,0,.50), 0 0 14px rgba(168,85,247,.20) !important; }
+.chat-entry.tier-2 .chat-tier-chip { background:#4c1d95 !important; color:#f0d9ff !important; }
+.chat-entry.tier-2 .chat-nick, .chat-entry.tier-2 .tier-nick { color:#e7c6ff !important; -webkit-text-fill-color:#e7c6ff !important; }
+.chat-entry.tier-3 { border-left-color:#f7c948 !important; background:linear-gradient(180deg, rgba(247,201,72,.18), rgba(83,45,12,.14)), #332719 !important; box-shadow:0 0 0 2px #090603, inset 0 2px 0 rgba(255,238,166,.18), inset 0 -3px 0 rgba(0,0,0,.38), 4px 4px 0 rgba(0,0,0,.55), 0 0 16px rgba(247,201,72,.24) !important; }
+.chat-entry.tier-3 .chat-tier-chip { background:#8a4b0f !important; color:#ffeaa0 !important; }
+.chat-entry.tier-3 .chat-nick, .chat-entry.tier-3 .tier-nick { color:#ffe27a !important; -webkit-text-fill-color:#ffe27a !important; }
+.chat-entry.tier-4 { border-left-color:#ff4d4d !important; border-color:#2a0b0b !important; background:linear-gradient(180deg, rgba(255,77,77,.16), rgba(255,210,84,.08)), #261719 !important; box-shadow:0 0 0 2px #070303, inset 0 2px 0 rgba(255,238,166,.18), inset 0 -3px 0 rgba(0,0,0,.42), 4px 4px 0 rgba(0,0,0,.60), 0 0 18px rgba(255,77,77,.25), 0 0 24px rgba(247,201,72,.14) !important; animation:chatLegendBreathe 2.4s steps(4) infinite !important; }
+.chat-entry.tier-4::before { display:none !important; }
+.chat-entry.tier-4 .chat-tier-chip { background:#7f1d1d !important; color:#ffefb0 !important; }
+.chat-entry.tier-4 .chat-nick, .chat-entry.tier-4 .tier-nick { color:#ffe066 !important; -webkit-text-fill-color:#ffe066 !important; }
+@keyframes chatLegendBreathe { 0%,100%{filter:none;} 50%{filter:brightness(1.08);} }
+/* ===== CHAT PIXEL TIER RESTYLE END ===== */
+
 </style>
 </head>
 <body>
@@ -525,7 +847,114 @@ html, body {
     </div>
   </div>
 </div>
-{% endif %}
+{% elif overlay_type == 'topgifter' %}
+<div class="podium-wrap" id="podium-wrap">
+  <div class="podium-banner">
+    <div class="podium-banner-text">⭐ GIFTER'S STAND ⭐</div>
+  </div>
+  <div class="podium-stage">
+    <div class="column-wrapper" id="col-2" style="opacity:0">
+      <div class="avatar-frame frame-2nd rank-2" id="av-2">
+        <img id="av-img-2" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="" style="display:none">
+        <div class="avatar-fallback">?</div>
+      </div>
+      <div class="podium-username" id="name-2">---</div>
+      <div class="score-badge"><span class="score-star">⭐</span><span id="score-2">0</span></div>
+      <div class="podium-block podium-2nd"><div class="plaque">2nd</div></div>
+    </div>
+    <div class="column-wrapper" id="col-1" style="opacity:0">
+      <div class="crown-container">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 8" style="width:44px;height:32px;shape-rendering:crispEdges;">
+          <rect x="5" y="0" width="1" height="1" fill="#311405"/>
+          <rect x="0" y="1" width="1" height="1" fill="#311405"/>
+          <rect x="4" y="1" width="1" height="1" fill="#311405"/>
+          <rect x="5" y="1" width="1" height="1" fill="#f7d57c"/>
+          <rect x="6" y="1" width="1" height="1" fill="#311405"/>
+          <rect x="10" y="1" width="1" height="1" fill="#311405"/>
+          <rect x="0" y="2" width="2" height="1" fill="#311405"/>
+          <rect x="3" y="2" width="1" height="1" fill="#311405"/>
+          <rect x="4" y="2" width="3" height="1" fill="#f7d57c"/>
+          <rect x="7" y="2" width="1" height="1" fill="#311405"/>
+          <rect x="9" y="2" width="2" height="1" fill="#311405"/>
+          <rect x="0" y="3" width="1" height="1" fill="#311405"/>
+          <rect x="1" y="3" width="1" height="1" fill="#f7d57c"/>
+          <rect x="2" y="3" width="2" height="1" fill="#311405"/>
+          <rect x="4" y="3" width="1" height="1" fill="#f7d57c"/>
+          <rect x="5" y="3" width="1" height="1" fill="#4287f5"/>
+          <rect x="6" y="3" width="1" height="1" fill="#f7d57c"/>
+          <rect x="7" y="3" width="2" height="1" fill="#311405"/>
+          <rect x="9" y="3" width="1" height="1" fill="#9e661b"/>
+          <rect x="10" y="3" width="1" height="1" fill="#311405"/>
+          <rect x="0" y="4" width="1" height="1" fill="#311405"/>
+          <rect x="1" y="4" width="2" height="1" fill="#f7d57c"/>
+          <rect x="3" y="4" width="1" height="1" fill="#311405"/>
+          <rect x="4" y="4" width="1" height="1" fill="#f7d57c"/>
+          <rect x="5" y="4" width="1" height="1" fill="#a6c8ff"/>
+          <rect x="6" y="4" width="1" height="1" fill="#f7d57c"/>
+          <rect x="7" y="4" width="1" height="1" fill="#311405"/>
+          <rect x="8" y="4" width="2" height="1" fill="#9e661b"/>
+          <rect x="10" y="4" width="1" height="1" fill="#311405"/>
+          <rect x="0" y="5" width="1" height="1" fill="#311405"/>
+          <rect x="1" y="5" width="7" height="1" fill="#f7d57c"/>
+          <rect x="8" y="5" width="2" height="1" fill="#9e661b"/>
+          <rect x="10" y="5" width="1" height="1" fill="#311405"/>
+          <rect x="0" y="6" width="1" height="1" fill="#311405"/>
+          <rect x="1" y="6" width="4" height="1" fill="#f7d57c"/>
+          <rect x="5" y="6" width="1" height="1" fill="#e5a93b"/>
+          <rect x="6" y="6" width="2" height="1" fill="#f7d57c"/>
+          <rect x="8" y="6" width="2" height="1" fill="#9e661b"/>
+          <rect x="10" y="6" width="1" height="1" fill="#311405"/>
+          <rect x="1" y="7" width="9" height="1" fill="#311405"/>
+        </svg>
+      </div>
+      <div class="avatar-frame frame-1st rank-1" id="av-1">
+        <img id="av-img-1" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="" style="display:none">
+        <div class="avatar-fallback">?</div>
+      </div>
+      <div class="podium-username" id="name-1">---</div>
+      <div class="score-badge"><span class="score-star">⭐</span><span id="score-1">0</span></div>
+      <div class="podium-block podium-1st"><div class="plaque">1st PLACE</div></div>
+    </div>
+    <div class="column-wrapper" id="col-3" style="opacity:0">
+      <div class="avatar-frame frame-3rd rank-3" id="av-3">
+        <img id="av-img-3" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="" style="display:none">
+        <div class="avatar-fallback">?</div>
+      </div>
+      <div class="podium-username" id="name-3">---</div>
+      <div class="score-badge"><span class="score-star">⭐</span><span id="score-3">0</span></div>
+      <div class="podium-block podium-3rd"><div class="plaque">3rd</div></div>
+    </div>
+  </div>
+</div>
+{% elif overlay_type == 'giftgoal' %}
+<div class="gg-wrap" id="gg-wrap" style="display:flex;">
+  <div class="gg-header" id="gg-header">Goal Today</div>
+  <div class="gg-icon-wrap">
+    <img class="gg-icon" id="gg-icon" src="" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+    <div class="gg-icon-ph" style="display:none"><i class="fa-solid fa-gift"></i></div>
+  </div>
+  <div class="gg-progress" id="gg-progress"><span class="gg-current" id="gg-current">0</span>/<span class="gg-goal" id="gg-goal">100</span></div>
+</div>
+{% elif overlay_type == 'oneblock' %}
+<div class="ob-wrap" id="ob-wrap" aria-hidden="true">
+  <div class="ob-card">
+    <div class="ob-header">
+      <span class="ob-icon">🌱</span>
+      <span class="ob-title">ONEBLOCK RUSH</span>
+    </div>
+    <div class="ob-phase-label">PHASE</div>
+    <div class="ob-phase" id="ob-phase">Waiting...</div>
+    <div class="ob-progress-shell">
+      <div class="ob-progress-fill" id="ob-progress-fill"></div>
+    </div>
+    <div class="ob-progress-text" id="ob-progress-text">0 / 0 mined</div>
+    <div class="ob-stats">
+      <div class="ob-stat-next"><span>Next Phase</span><strong id="ob-left">0 blocks</strong></div>
+      <div class="ob-stat-total"><span>Total Mined</span><strong id="ob-total">0</strong></div>
+      <div class="ob-stat-block"><span>Current Block</span><strong id="ob-block">unknown</strong></div>
+    </div>
+  </div>
+</div>
 {% endif %}
 
 <script>
@@ -550,6 +979,12 @@ document.addEventListener('DOMContentLoaded', () => {
     tsWrap.style.left = '50%';
     tsWrap.style.transform = 'translate(-50%, -50%)';
   }
+  const pWrap = document.querySelector('.podium-wrap');
+  if (pWrap) {
+    pWrap.style.top = '50%';
+    pWrap.style.left = '50%';
+    pWrap.style.transform = 'translate(-50%, -50%)';
+  }
 });
 let lastCount = 0;
 let sfQueue = [];
@@ -565,6 +1000,9 @@ async function fetchData() {
     else if (OVERLAY_TYPE === 'superfan') url = '/api/stats/superfan';
     else if (OVERLAY_TYPE === 'topgift') url = '/api/stats/gifts';
     else if (OVERLAY_TYPE === 'topstreak') url = '/api/stats/gifts';
+    else if (OVERLAY_TYPE === 'topgifter') url = '/api/stats/topgifter';
+    else if (OVERLAY_TYPE === 'giftgoal') url = '/api/stats/giftgoal';
+    else if (OVERLAY_TYPE === 'oneblock') url = 'http://127.0.0.1:5943/oneblock';
     else return;
 
     const res = await fetch(url);
@@ -576,10 +1014,58 @@ async function fetchData() {
       handleTopGift(data);
     } else if (OVERLAY_TYPE === 'topstreak') {
       handleTopStreak(data);
+    } else if (OVERLAY_TYPE === 'topgifter') {
+      handleTopGifter(data);
+    } else if (OVERLAY_TYPE === 'giftgoal') {
+      handleGiftGoal(data);
+    } else if (OVERLAY_TYPE === 'oneblock') {
+      renderOneBlock(data);
     } else {
       renderEntries(data);
     }
   } catch(e) {}
+}
+
+function obShortBlock(id) {
+  if (!id) return 'unknown';
+  return String(id).replace(/^minecraft:/, '').replace(/_/g, ' ');
+}
+
+function obSafeNumber(value, fallback) {
+  if (fallback === undefined) fallback = 0;
+  var n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function renderOneBlock(data) {
+  var wrap = document.getElementById('ob-wrap');
+  if (!wrap) return;
+
+  if (!data || !data.ok || !Array.isArray(data.oneblocks) || data.oneblocks.length === 0) {
+    wrap.classList.remove('ob-visible');
+    wrap.setAttribute('aria-hidden', 'true');
+    return;
+  }
+
+  var ob = data.oneblocks[0];
+  var phaseName = ob.phase_name || ob.phase_id || 'Unknown Phase';
+  var mined = obSafeNumber(ob.blocks_mined_in_phase);
+  var total = obSafeNumber(ob.phase_count);
+  var left = obSafeNumber(ob.blocks_needed_to_next_phase != null ? ob.blocks_needed_to_next_phase : ob.blocks_left);
+  var totalMined = obSafeNumber(ob.blocks_mined_total != null ? ob.blocks_mined_total : ob.counter);
+  var rawPct = obSafeNumber(ob.phase_progress_percent, -1);
+  var pct = rawPct >= 0 ? rawPct : (total > 0 ? (mined / total) * 100 : 0);
+  pct = Math.max(0, Math.min(100, pct));
+
+  document.getElementById('ob-phase').textContent = phaseName;
+  document.getElementById('ob-progress-fill').style.width = pct.toFixed(0) + '%';
+  document.getElementById('ob-progress-text').textContent = mined + ' / ' + total + ' mined';
+  document.getElementById('ob-left').textContent = left + ' blocks';
+  document.getElementById('ob-total').textContent = String(totalMined);
+  document.getElementById('ob-block').textContent = obShortBlock(ob.current_block);
+
+  wrap.classList.add('ob-visible');
+  wrap.setAttribute('aria-hidden', 'false');
 }
 
 // ========== RENDER CHAT/GIFTS/FOLLOWS ==========
@@ -620,6 +1106,15 @@ function renderEntries(entries) {
   }
 }
 
+
+function getChatTierMeta(tierClass) {
+  if (tierClass === 'tier-4') return { key: 'legend', label: 'LEGEND' };
+  if (tierClass === 'tier-3') return { key: 'gold', label: 'GOLD' };
+  if (tierClass === 'tier-2') return { key: 'amethyst', label: 'AMETHYST' };
+  if (tierClass === 'tier-1') return { key: 'iron', label: 'IRON' };
+  return null;
+}
+
 function buildChatEntry(e) {
   const level = e.gifter_level || 0;
   let tierClass = '';
@@ -642,9 +1137,11 @@ function buildChatEntry(e) {
     }).join('');
   }
 
-  // Tags
+  // Tags + tier chip
   const tags = e.tags || '';
-  const tagBadge = tags ? `<span class="chat-badge">${tags}</span>` : '';
+  const tierMeta = getChatTierMeta(tierClass);
+  const tierChip = tierMeta ? `<span class="chat-tier-chip chat-tier-chip-${tierMeta.key}">${tierMeta.label}</span>` : '';
+  const tagBadge = tags ? `<span class="chat-badge">${esc(tags)}</span>` : '';
 
   // Nick — use .tier-nick for tier-4 to isolate gradient
   const nickClass = tierClass === 'tier-4' ? 'tier-nick' : '';
@@ -655,7 +1152,7 @@ function buildChatEntry(e) {
   return `<div class="chat-entry ${tierClass}">
     <div class="chat-avatar">${avatarHtml}</div>
     <div class="chat-body">
-      <span class="chat-nick">${nickHtml}</span>${badgesHtml}${tagBadge}
+      <span class="chat-nick">${nickHtml}</span>${tierChip}${badgesHtml}${tagBadge}
       <div class="chat-text">${esc(e.comment || '')}</div>
     </div>
   </div>`;
@@ -674,18 +1171,16 @@ function buildGiftEntry(e) {
 }
 
 function buildFollowEntry(e) {
-  const initial = (e.nick || '?').charAt(0).toUpperCase();
   const avatarHtml = e.avatar_url
-    ? `<img src="${e.avatar_url}" alt="${e.nick}" onerror="this.parentElement.innerHTML='<i class=\\'fa-solid fa-user\\'></i>'">`
-    : `<i class="fa-solid fa-user"></i>`;
+    ? `<div class="follow-avatar"><img src="${e.avatar_url}" alt="${e.nick}" onerror="this.parentElement.remove();"></div>`
+    : '';
 
   return `<div class="follow-entry">
-    <div class="follow-avatar">${avatarHtml}</div>
+    ${avatarHtml}
     <div class="follow-info">
       <div class="follow-nick">${esc(e.nick || '?')}</div>
-      <div class="follow-id">@${esc(e.unique_id || 'unknown')}</div>
+      <div class="follow-id"><span class="follow-unique">@${esc(e.unique_id || 'unknown')}</span> started following</div>
     </div>
-    <div class="follow-badge">NEW</div>
   </div>`;
 }
 
@@ -997,9 +1492,337 @@ function resetTopStreak() {
   document.getElementById('ts-streak-count').textContent = '0';
 }
 
+// ========== TOP GIFTER (Stardew Valley) ==========
+let prevGifterHash = '';
+
+function handleTopGifter(data) {
+  const wrap = document.getElementById('podium-wrap');
+  if (!wrap) return;
+
+  if (!data || !Array.isArray(data) || data.length === 0) {
+    wrap.classList.remove('visible');
+    return;
+  }
+
+  const hash = JSON.stringify(data.map(g => `${g.nick}:${g.total_coins}:${g.avatar_url || ''}`));
+  if (hash === prevGifterHash) {
+    wrap.classList.add('visible');
+    return;
+  }
+  prevGifterHash = hash;
+
+  for (let i = 0; i < 3; i++) {
+    const entry = data[i] || null;
+    const idx = i + 1;
+    const col = document.getElementById('col-' + idx);
+    const nameEl = document.getElementById('name-' + idx);
+    const scoreEl = document.getElementById('score-' + idx);
+    const frame = document.getElementById('av-' + idx);
+    if (!col || !nameEl || !scoreEl || !frame) continue;
+
+    if (!entry) { col.style.opacity = '0'; continue; }
+    col.style.opacity = '1';
+
+    nameEl.textContent = entry.nick || '???';
+    scoreEl.textContent = entry.total_coins ? entry.total_coins.toLocaleString() : '0';
+
+    const img = frame.querySelector('img');
+    const fb = frame.querySelector('.avatar-fallback');
+    const initial = (entry.nick || '?').charAt(0).toUpperCase();
+    if (fb) fb.textContent = initial;
+    if (entry.avatar_url) {
+      if (img) {
+        img.onload = function() {
+          this.style.display = '';
+          if (fb) fb.style.display = 'none';
+        };
+        img.onerror = function() {
+          this.style.display = 'none';
+          if (fb) fb.style.display = '';
+        };
+        img.src = escAttr(entry.avatar_url);
+        img.style.display = 'none';
+      }
+      if (fb) fb.style.display = '';
+    } else {
+      if (img) { img.style.display = 'none'; img.onerror = null; img.onload = null; }
+      if (fb) { fb.textContent = initial; fb.style.display = ''; }
+    }
+
+    col.classList.remove('pulse');
+    void col.offsetWidth;
+    col.classList.add('pulse');
+  }
+  wrap.classList.add('visible');
+}
+
+// ============ GIFT GOAL OVERLAY ============
+let ggDisplayed = 0;
+function ggAnimateCount(target) {
+  const el = document.getElementById('gg-current');
+  if (!el) return;
+  const start = ggDisplayed, diff = target - start;
+  if (diff === 0) return;
+  const dur = Math.min(700, Math.max(300, Math.abs(diff) * 80));
+  const t0 = performance.now();
+  function step(now) {
+    const t = Math.min((now - t0) / dur, 1);
+    const e = 1 - Math.pow(1 - t, 3);
+    ggDisplayed = start + diff * e;
+    el.innerText = Math.round(ggDisplayed);
+    if (t < 1) requestAnimationFrame(step);
+    else { ggDisplayed = target; el.innerText = target; }
+  }
+  requestAnimationFrame(step);
+}
+
+let ggCurrentMediaKey = '';
+let ggAnimState = null;
+const ggFailedAssets = new Set();
+
+function ggStopGiftMedia() {
+  if (ggAnimState && ggAnimState.raf) cancelAnimationFrame(ggAnimState.raf);
+  if (ggAnimState && ggAnimState.video) {
+    try { ggAnimState.video.pause(); } catch (_) {}
+    ggAnimState.video.removeAttribute('src');
+    try { ggAnimState.video.load(); } catch (_) {}
+  }
+  ggAnimState = null;
+}
+
+function ggSetFallbackIcon(iconUrl) {
+  const wrap = document.getElementById('gg-wrap');
+  const iconWrap = wrap ? wrap.querySelector('.gg-icon-wrap') : null;
+  if (!iconWrap) return;
+  if (wrap) wrap.classList.remove('gg-has-anim');
+  const key = 'icon:' + (iconUrl || 'fallback');
+  if (ggCurrentMediaKey === key) return;
+  ggStopGiftMedia();
+  ggCurrentMediaKey = key;
+  iconWrap.innerHTML = '';
+  if (iconUrl) {
+    const img = document.createElement('img');
+    img.className = 'gg-icon';
+    img.alt = 'Gift';
+    img.src = iconUrl;
+    img.onerror = () => { iconWrap.innerHTML = '<div class="gg-icon-ph"><i class="fa-solid fa-gift"></i></div>'; };
+    iconWrap.appendChild(img);
+  } else {
+    iconWrap.innerHTML = '<div class="gg-icon-ph"><i class="fa-solid fa-gift"></i></div>';
+  }
+}
+
+function ggRenderGiftMedia(data) {
+  const wrap = document.getElementById('gg-wrap');
+  const iconWrap = wrap ? wrap.querySelector('.gg-icon-wrap') : null;
+  if (!iconWrap) return;
+  const assetUrl = data && data.gift_asset_url ? String(data.gift_asset_url) : '';
+  const iconUrl = data && data.gift_icon ? String(data.gift_icon) : '';
+  if (!assetUrl || /\.json(\?|$)/i.test(assetUrl) || ggFailedAssets.has(assetUrl)) {
+    ggSetFallbackIcon(iconUrl);
+    return;
+  }
+
+  const key = 'asset:' + assetUrl;
+  if (ggCurrentMediaKey === key) {
+    if (wrap) wrap.classList.add('gg-has-anim');
+    return;
+  }
+  ggStopGiftMedia();
+  ggCurrentMediaKey = key;
+  if (wrap) wrap.classList.add('gg-has-anim');
+  iconWrap.innerHTML = '';
+
+  const video = document.createElement('video');
+  video.muted = true;
+  video.loop = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  video.style.display = 'none';
+
+  const canvas = document.createElement('canvas');
+  canvas.className = 'gg-anim-canvas';
+  canvas.width = 128;
+  canvas.height = 128;
+  iconWrap.appendChild(canvas);
+  iconWrap.appendChild(video);
+
+  const fallback = () => {
+    ggFailedAssets.add(assetUrl);
+    ggSetFallbackIcon(iconUrl);
+  };
+  video.onerror = fallback;
+
+  video.onloadedmetadata = () => {
+    const vw = video.videoWidth || 0;
+    const vh = video.videoHeight || 0;
+    if (!vw || !vh) { fallback(); return; }
+
+    // TikTok high-value gifts can be RGB+alpha packed side-by-side.
+    const isPackedAlpha = (vw % 2 === 0) && (vw >= vh * 0.9);
+    if (!isPackedAlpha) {
+      ggStopGiftMedia();
+      ggCurrentMediaKey = key;
+      iconWrap.innerHTML = '';
+      video.className = 'gg-anim-video';
+      video.style.display = '';
+      iconWrap.appendChild(video);
+      video.play().catch(fallback);
+      ggAnimState = { video, raf: 0 };
+      return;
+    }
+
+    const srcW = Math.floor(vw / 2);
+    const srcH = vh;
+    const outW = 128;
+    const outH = 128;
+    const workW = 220;
+    const workH = Math.max(1, Math.round(workW * (srcH / srcW)));
+    canvas.width = outW;
+    canvas.height = outH;
+
+    const out = canvas.getContext('2d', { willReadFrequently: true });
+    const rgbCanvas = document.createElement('canvas');
+    const alphaCanvas = document.createElement('canvas');
+    const maskOutCanvas = document.createElement('canvas');
+    rgbCanvas.width = alphaCanvas.width = workW;
+    rgbCanvas.height = alphaCanvas.height = workH;
+    maskOutCanvas.width = outW;
+    maskOutCanvas.height = outH;
+    const rgb = rgbCanvas.getContext('2d', { willReadFrequently: true });
+    const alpha = alphaCanvas.getContext('2d', { willReadFrequently: true });
+    const maskOut = maskOutCanvas.getContext('2d', { willReadFrequently: true });
+    const state = { video, raf: 0, crop: null };
+    ggAnimState = state;
+
+    const findMaskBox = (mask) => {
+      let x1 = workW, y1 = workH, x2 = 0, y2 = 0;
+      for (let y = 0; y < workH; y++) {
+        const row = y * workW * 4;
+        for (let x = 0; x < workW; x++) {
+          const i = row + x * 4;
+          const a = Math.max(mask[i], mask[i + 1], mask[i + 2]);
+          if (a > 8) {
+            if (x < x1) x1 = x;
+            if (y < y1) y1 = y;
+            if (x + 1 > x2) x2 = x + 1;
+            if (y + 1 > y2) y2 = y + 1;
+          }
+        }
+      }
+      if (x2 <= x1 || y2 <= y1) return null;
+      const padX = Math.max(8, Math.round((x2 - x1) * 0.08));
+      const padY = Math.max(8, Math.round((y2 - y1) * 0.10));
+      return {
+        x1: Math.max(0, x1 - padX),
+        y1: Math.max(0, y1 - padY),
+        x2: Math.min(workW, x2 + padX),
+        y2: Math.min(workH, y2 + padY),
+      };
+    };
+
+    const draw = () => {
+      if (ggAnimState !== state || video.paused || video.ended) return;
+      try {
+        rgb.clearRect(0, 0, workW, workH);
+        alpha.clearRect(0, 0, workW, workH);
+        out.clearRect(0, 0, outW, outH);
+        maskOut.clearRect(0, 0, outW, outH);
+        rgb.drawImage(video, 0, 0, srcW, srcH, 0, 0, workW, workH);
+        alpha.drawImage(video, srcW, 0, srcW, srcH, 0, 0, workW, workH);
+        const mask = alpha.getImageData(0, 0, workW, workH).data;
+        const box = findMaskBox(mask);
+        if (!box) {
+          state.raf = requestAnimationFrame(draw);
+          return;
+        }
+        if (!state.crop) {
+          state.crop = box;
+        } else {
+          state.crop = {
+            x1: Math.min(state.crop.x1, box.x1),
+            y1: Math.min(state.crop.y1, box.y1),
+            x2: Math.max(state.crop.x2, box.x2),
+            y2: Math.max(state.crop.y2, box.y2),
+          };
+        }
+        const c = state.crop;
+        const cropW = Math.max(1, c.x2 - c.x1);
+        const cropH = Math.max(1, c.y2 - c.y1);
+        const scale = Math.max(outW / cropW, outH / cropH);
+        const drawW = Math.max(1, Math.round(cropW * scale));
+        const drawH = Math.max(1, Math.round(cropH * scale));
+        const dx = Math.round((outW - drawW) / 2);
+        const dy = Math.round(outH - drawH);
+
+        out.drawImage(rgbCanvas, c.x1, c.y1, cropW, cropH, dx, dy, drawW, drawH);
+        maskOut.drawImage(alphaCanvas, c.x1, c.y1, cropW, cropH, dx, dy, drawW, drawH);
+        const frame = out.getImageData(0, 0, outW, outH);
+        const alphaFrame = maskOut.getImageData(0, 0, outW, outH).data;
+        const pixels = frame.data;
+        for (let i = 0; i < pixels.length; i += 4) {
+          pixels[i + 3] = Math.max(alphaFrame[i], alphaFrame[i + 1], alphaFrame[i + 2]);
+        }
+        out.putImageData(frame, 0, 0);
+      } catch (e) {
+        fallback();
+        return;
+      }
+      state.raf = requestAnimationFrame(draw);
+    };
+
+    video.play().then(() => {
+      state.raf = requestAnimationFrame(draw);
+    }).catch(fallback);
+  };
+
+  video.src = assetUrl;
+}
+
+function handleGiftGoal(data) {
+  if (!data || typeof data !== 'object') return;
+  const wrap = document.getElementById('gg-wrap');
+  if (!wrap) return;
+
+  const goal = Math.max(1, parseInt(data.goal) || 100);
+  const current = Math.max(0, parseInt(data.current) || 0);
+
+  wrap.style.display = 'flex';
+
+  // Header
+  const headerEl = document.getElementById('gg-header');
+  if (headerEl) headerEl.innerText = data.header || 'Goal Today';
+
+  // Goal text
+  const goalEl = document.getElementById('gg-goal');
+  if (goalEl) goalEl.innerText = goal;
+
+  // Gift media: animation when cached, static icon fallback.
+  ggRenderGiftMedia(data);
+
+  // Current counter (animate)
+  const currentEl = document.getElementById('gg-current');
+  if (currentEl) {
+    if (ggDisplayed === 0 && current > 0) {
+      ggDisplayed = current;
+      currentEl.innerText = current;
+    } else if (current !== ggDisplayed) {
+      ggAnimateCount(current);
+    }
+  }
+}
+
+function escAttr(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
 // ========== INIT ==========
 fetchData();
 setInterval(fetchData, 1500);
 </script>
 </body>
 </html>
+
+/* Chat badge natural width after tier normalization */
+.chat-badge { min-width:0 !important; width:auto !important; }
+.chat-tier-chip { width:64px !important; }

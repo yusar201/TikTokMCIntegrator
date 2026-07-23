@@ -171,8 +171,8 @@ def add_to_song_queue():
 
 @spotify_bp.route("/queue/<int:position>", methods=["DELETE"])
 def remove_from_song_queue(position):
-    """Remove a track from the local queue."""
-    result = sh.remove_from_queue(position - 1, "dashboard")
+    """Remove a queued/pushed track from the local queue via dashboard admin control."""
+    result = sh.remove_from_queue(position - 1, "dashboard", allow_any=True)
     if "error" in result:
         return jsonify(result), 400
     return jsonify(result)
@@ -252,15 +252,47 @@ def simulate_play():
     try:
         token = sh.get_valid_token()
         if token:
-            playback = sh.get_current_playback()
-            if not playback.get("is_playing") and not playback.get("item"):
-                sh.queue_track(track["uri"])
-                queue = sh.load_queue()
-                for i, q in enumerate(queue):
-                    if q.get("spotify_uri") == track.get("uri") and q.get("status") in ("queued", "pushed"):
-                        q["status"] = "playing"
-                        break
-                sh.save_queue(queue)
+            # Check LOCAL queue first — it's the source of truth and doesn't
+            # lag like Spotify's playback cache does. (See minecraft_main.py
+            # !play handler for the same fix.)
+            local_queue = sh.load_queue()
+            has_local_playing = any(
+                q.get("status") == "playing" for q in local_queue
+            )
+
+            if has_local_playing:
+                # User song already playing in our local queue. Just queue
+                # this one locally — DON'T touch Spotify's queue.
+                pass
+            else:
+                playback = sh.get_current_playback()
+                spotify_playing = playback.get("is_playing", False)
+                spotify_item = playback.get("item")
+
+                if not spotify_playing and not spotify_item:
+                    # Nothing playing anywhere → play immediately via
+                    # play_track_immediate (local-only architecture).
+                    sh.play_track_immediate(track["uri"])
+                    queue = sh.load_queue()
+                    new_pos = None
+                    for i, q in enumerate(queue):
+                        if q.get("spotify_uri") == track.get("uri") and q.get("status") in ("queued", "pushed"):
+                            new_pos = i
+                            break
+                    if new_pos is not None:
+                        sh.mark_as_playing(new_pos)
+                else:
+                    # Loop song / non-user song is playing on Spotify, no
+                    # user song in our local queue → replace context.
+                    sh.play_track_immediate(track["uri"])
+                    queue = sh.load_queue()
+                    new_pos = None
+                    for i, q in enumerate(queue):
+                        if q.get("spotify_uri") == track.get("uri") and q.get("status") in ("queued", "pushed"):
+                            new_pos = i
+                            break
+                    if new_pos is not None:
+                        sh.mark_as_playing(new_pos)
     except Exception as e:
         print(f"[SIMULATE] Direct push error (non-fatal): {e}")
 
@@ -278,7 +310,10 @@ def simulate_skip():
         sh.push_song_feedback(nick, "error", "✗", f"@{nick} — skip failed: {result['error']}")
         return jsonify(result), 400
 
-    sh.push_song_feedback(nick, "success", "⏭", f"@{nick} skipped the track")
+    # Play next from local queue immediately
+    played = sh.play_next_from_queue()
+    sh.push_song_feedback(nick, "success", "⏭",
+        f"@{nick} skipped to next track" if played else f"@{nick} skipped the track")
     return jsonify({"success": True, "feedback_pushed": True})
 
 
@@ -296,15 +331,8 @@ def simulate_pull():
         q = queue[i]
         if q.get("requested_by", "").lower() == nick.lower() and q.get("status") in ("queued", "pushed"):
             removed_track = f"{q.get('track_name', 'Unknown')} \u2014 {q.get('artist', 'Unknown')}"
-            was_pushed = q.get("status") == "pushed"
             sh.remove_from_queue(i, nick)
             removed = True
-            # If already pushed to Spotify, skip immediately
-            if was_pushed:
-                try:
-                    sh.skip_track()
-                except Exception:
-                    pass
             break
 
     if removed:

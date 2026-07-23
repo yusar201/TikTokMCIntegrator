@@ -1,144 +1,453 @@
 """
 main.py — TikTok MC Integrator launcher
-Runs the Flask dashboard via waitress and shows a system tray icon.
+
+Boots the Flask dashboard (via waitress) and presents it in a NATIVE desktop
+window using pywebview (Edge WebView2 on Windows) instead of opening a browser
+tab. A bundled pixel-art splash shows instantly while Flask warms up, then the
+same window swaps to the dashboard. A system-tray icon runs alongside.
+
+Threading model (per multi-model fusion consensus, 2026-06-21):
+  - pywebview owns the MAIN thread (webview.start() blocks there). WebView2
+    HWNDs MUST be created on the thread that pumps the Win32 message loop.
+  - pystray runs on its OWN thread via Icon.run_detached().
+  - Flask (waitress) + the song-queue worker run on daemon threads.
+
+Graceful degradation: if the WebView2 runtime is missing or pywebview fails to
+initialize, we fall back to opening the default browser (the legacy behavior)
+and keep the tray icon alive — so a failure is never worse than before.
+
 Double-click TikTokMCIntegrator.exe to start.
 """
 import os
 import sys
+import time
 import threading
+import traceback
 import webbrowser
+import urllib.request
 
-from PIL import Image, ImageDraw, ImageFont
+# Process-mode dispatch MUST happen before dashboard/media/native-shell imports.
+# The frozen EXE re-enters this same script for isolated runtimes.
+if __name__ == '__main__' and len(sys.argv) > 1:
+    if sys.argv[1] == '--run-bot':
+        import minecraft_main
+        minecraft_main.run_bot()
+        sys.exit(0)
+    if sys.argv[1] == '--objective-rush':
+        from objective_rush_headless import run
+        run()
+        sys.exit(0)
+
+from PIL import Image, ImageDraw
 import pystray
 from waitress import serve
 
 # Import the Flask app and setup function
-from app import app, ensure_profiles_setup
+from app import app, ensure_profiles_setup, start_tts_warmup_once
+
+# Centralized, frozen-aware paths (config/ data/ logs/ assets/).
+import paths
+
+PORT = 5000
+URL = f"http://localhost:{PORT}"
+
+# Module-level handle so tray callbacks can reach the native window.
+_window = None
 
 
-# ── Tray icon image (drawn with PIL, no external file needed) ──────────────────
+def _is_bot_running() -> bool:
+    """True when the TikTok bot subprocess is still connected/running."""
+    try:
+        import app as app_module
+        running, _local, _external = app_module.is_any_bot_running()
+        return running
+    except Exception:
+        return False
+
+
+def _stop_bot_and_report() -> None:
+    """Terminate the bot subprocess and write the post-stream report if possible."""
+    try:
+        import app as app_module
+        from app import generate_report
+        app_module.stop_all_bots()
+        try:
+            generate_report()
+            _log("Report saved.")
+        except Exception as e:
+            _log(f"Report generation failed: {e}")
+    except Exception as e:
+        _log(f"Error stopping bot: {e}")
+
+
+def _close_process(stop_bot: bool) -> None:
+    """Exit the launcher process; optionally stop the bot first."""
+    if stop_bot:
+        _log("Stopping bot and closing app...")
+        _stop_bot_and_report()
+    else:
+        _log("Closing app while leaving bot subprocess running.")
+    os._exit(0)
+
+
+class CloseApi:
+    """pywebview bridge used by the in-app close warning modal."""
+
+    def close_app(self, action: str = "keep") -> dict:
+        if action == "stop":
+            threading.Thread(target=_close_process, args=(True,), daemon=True).start()
+            return {"status": "closing", "mode": "stop"}
+        if action == "leave":
+            threading.Thread(target=_close_process, args=(False,), daemon=True).start()
+            return {"status": "closing", "mode": "leave"}
+        return {"status": "kept_open"}
+
+
+# ── Startup logging (console=False ⇒ no stdout; log everything to logs/) ──────
+def _log(msg):
+    """Append a line to logs/launcher.log and best-effort echo to stdout.
+
+    With console=False there is NO visible output, so a silent failure looks
+    like a dead app. Every startup step + any exception lands in this file so a
+    broken launch is diagnosable instead of mysterious.
+    """
+    try:
+        line = f"[launcher] {msg}"
+        with open(paths.logs("launcher.log"), "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+    try:
+        print(f"[launcher] {msg}")
+    except Exception:
+        pass
+
+
+# ── Tray icon image (load logo.png, fall back to drawn diamond) ────────────────
+def _logo_path():
+    """Locate static/logo.png in dev and frozen layouts."""
+    base = sys._MEIPASS if getattr(sys, 'frozen', False) \
+        else os.path.dirname(os.path.abspath(__file__))
+    candidate = os.path.join(base, 'static', 'logo.png')
+    return candidate if os.path.exists(candidate) else None
+
+
 def create_icon_image():
+    # Prefer the user's real logo for the tray icon.
+    lp = _logo_path()
+    if lp:
+        try:
+            return Image.open(lp).convert('RGBA')
+        except Exception as e:
+            _log(f"Failed to load logo.png for tray ({e}); using drawn icon.")
+
+    # Fallback: drawn teal diamond (no external file needed).
     size = 64
     img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-
-    # Background circle — teal/cyan gradient approximation
     d.ellipse([2, 2, size - 2, size - 2], fill=(0, 200, 180, 255))
-
-    # Inner diamond shape — white
     cx, cy = size // 2, size // 2
     pts = [(cx, 8), (size - 8, cy), (cx, size - 8), (8, cy)]
     d.polygon(pts, fill=(255, 255, 255, 230))
-
-    # Dark diamond core
     offset = 14
     inner = [(cx, 8 + offset), (size - 8 - offset, cy),
              (cx, size - 8 - offset), (8 + offset, cy)]
     d.polygon(inner, fill=(0, 160, 145, 255))
-
     return img
 
 
 # ── Tray menu actions ──────────────────────────────────────────────────────────
 def open_dashboard(icon, item):
-    webbrowser.open('http://localhost:5000')
+    """Bring the native window forward, or fall back to a browser tab.
+
+    NOTE: this fires on pystray's thread, not the webview main thread. We only
+    touch pywebview through its own thread-safe APIs (show/restore), and if the
+    window is gone we open a browser — never create a webview window off-thread.
+    """
+    global _window
+    try:
+        if _window is not None:
+            try:
+                _window.show()
+            except Exception:
+                pass
+            try:
+                _window.maximize()
+            except Exception:
+                pass
+            return
+    except Exception:
+        pass
+    webbrowser.open(URL)
 
 
 def exit_app(icon, item):
-    """Gracefully shut down — show confirmation if bot is running."""
-    try:
-        from app import bot_process
-        import app as app_module
-        bot_running = (app_module.bot_process is not None and
-                       app_module.bot_process.poll() is None)
-    except Exception:
-        bot_running = False
-
-    if bot_running:
+    """Gracefully shut down — warn if the bot is still running."""
+    global _window
+    if _is_bot_running():
+        # Prefer the styled in-app warning over a native Tk dialog.
         try:
+            if _window is not None:
+                _show_close_warning_async("tray")
+                return
+        except Exception as e:
+            _log(f"Could not show in-app close warning from tray: {e}")
+
+        try:
+            import tkinter
             import tkinter.messagebox
             root = tkinter.Tk()
             root.withdraw()
             result = tkinter.messagebox.askyesnocancel(
                 "Bot Still Running",
                 "The TikTok bot is still connected.\n\n"
-                "Yes  → Stop bot & close\n"
-                "No   → Close without stopping (bot runs)\n"
-                "Cancel → Keep the app open"
+                "Yes  -> Stop bot & close\n"
+                "No   -> Close without stopping (bot runs)\n"
+                "Cancel -> Keep the app open"
             )
             root.destroy()
         except Exception:
-            result = True  # fallback: just stop and close
+            result = None
 
-        if result is None:  # Cancel
+        if result is None:  # Cancel / fallback: keep safe
             return
-        if result:  # Yes — stop bot
-            print("Stopping bot and generating report...")
-            try:
-                from app import generate_report
-                app_module.bot_process.terminate()
-                app_module.bot_process.wait()
-                app_module.bot_process = None
-                try:
-                    generate_report()
-                    print("Report saved!")
-                except Exception as e:
-                    print(f"Report generation failed: {e}")
-            except Exception as e:
-                print(f"Error during shutdown: {e}")
-        # No — just close, leave bot running
+        _close_process(stop_bot=bool(result))
     else:
-        print("Shutting down TikTok MC Integrator...")
-
-    icon.stop()
-    os._exit(0)
+        _log("Shutting down TikTok MC Integrator...")
+        try:
+            icon.stop()
+        except Exception:
+            pass
+        os._exit(0)
 
 
 # ── Flask runner (background thread) ──────────────────────────────────────────
 def run_flask():
-    serve(app, host='0.0.0.0', port=5000, threads=4)
-
-
-# ── Entry point ────────────────────────────────────────────────────────────────
-if __name__ == '__main__':
-    if len(sys.argv) > 1 and sys.argv[1] == '--run-bot':
-        import minecraftDiamond
-        minecraftDiamond.run_bot()
-        sys.exit(0)
-
-    # Ensure profiles/config exist before Flask starts
-    ensure_profiles_setup()
-
-    # Start song queue worker
     try:
-        from spotify_handler import start_song_queue_worker
-        start_song_queue_worker()
+        serve(app, host='0.0.0.0', port=PORT, threads=4)
     except Exception as e:
-        print(f"[SONG-QUEUE] Failed to start worker: {e}")
+        _log(f"Flask/waitress crashed: {e}")
+        _log(traceback.format_exc())
 
-    # Start Flask in background daemon thread
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
 
-    # Auto-open browser after a short delay so Flask is ready
-    threading.Timer(1.8, lambda: webbrowser.open('http://localhost:5000')).start()
+# ── Splash path resolution (works in dev AND frozen) ──────────────────────────
+def _splash_url():
+    """Return a file:// URL to the bundled splash.html, or None if missing.
 
-    # Build tray menu
+    Frozen: templates/ is extracted under sys._MEIPASS. Dev: it sits next to
+    this file. Shown via file:// so it renders BEFORE Flask is reachable.
+    """
+    if getattr(sys, 'frozen', False):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    candidate = os.path.join(base, 'templates', 'splash.html')
+    if os.path.exists(candidate):
+        # webview accepts a plain absolute path or a file URL; normalize to URL.
+        return 'file:///' + candidate.replace('\\', '/')
+    _log(f"splash.html not found at {candidate} — will load {URL} directly")
+    return None
+
+
+# ── Tray bootstrap (own thread, via run_detached) ─────────────────────────────
+def _start_tray():
     menu = pystray.Menu(
         pystray.MenuItem('Open Dashboard', open_dashboard, default=True),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem('Exit', exit_app),
     )
-
     tray = pystray.Icon(
         name='TikTokMCIntegrator',
         icon=create_icon_image(),
         title='TikTok MC Integrator',
         menu=menu,
     )
+    try:
+        # run_detached() pumps the tray's message loop on its OWN thread so the
+        # main thread is free for pywebview. Documented pystray coexistence path.
+        tray.run_detached()
+        _log("System tray started (detached).")
+    except Exception as e:
+        _log(f"Tray run_detached failed ({e}); falling back to a daemon thread.")
+        threading.Thread(target=tray.run, daemon=True).start()
+    return tray
 
-    print("TikTok MC Integrator running — http://localhost:5000")
-    print("Check your system tray to manage the app.")
 
-    # pystray.run() MUST be on the main thread (Windows requirement)
-    tray.run()
+# ── Server-side readiness poll → swap splash to dashboard ─────────────────────
+def _wait_then_load():
+    """Poll /health from PYTHON (no CORS), then navigate the window to the app.
+
+    The splash loads from a file:// origin, so a JS fetch() to http://localhost
+    is cross-origin and Chromium blocks it — that was the "stuck on starting"
+    bug. Polling here in Python sidesteps CORS entirely, and window.load_url()
+    is a top-level navigation (also not subject to CORS). This is the reliable
+    swap path.
+    """
+    global _window
+    deadline = time.time() + 60  # generous; cold start can unpack for a while
+    url = URL + "/health"
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2) as r:
+                if r.status == 200:
+                    _log("Flask /health OK — loading dashboard into window.")
+                    try:
+                        if _window is not None:
+                            _window.load_url(URL + "/")
+                            return
+                    except Exception as e:
+                        _log(f"window.load_url failed ({e}); opening browser.")
+                        webbrowser.open(URL)
+                        return
+        except Exception:
+            pass  # not up yet
+        time.sleep(0.25)
+    _log("Flask did not become ready within 60s; opening browser as fallback.")
+    try:
+        webbrowser.open(URL)
+    except Exception:
+        pass
+
+
+def _show_close_warning_async(source="window"):
+    """Show close warning after the native closing event returns.
+
+    Calling evaluate_js synchronously inside WebView2's closing callback can
+    deadlock the UI thread. Timer returns control first, then JS opens the modal.
+    """
+    def _show():
+        try:
+            if _window is not None:
+                _window.show()
+                _window.maximize()
+                _window.evaluate_js(f"window.showBotCloseWarning && window.showBotCloseWarning('{source}')")
+        except Exception as e:
+            _log(f"Could not show in-app close warning: {e}")
+    threading.Timer(0.1, _show).start()
+
+
+# ── Native window close guard ─────────────────────────────────────────────────
+def _on_window_closing():
+    """Cancel window close while the bot is running and show styled app modal."""
+    if not _is_bot_running():
+        return True
+
+    _show_close_warning_async("window")
+    return False
+
+
+# ── Native window with browser fallback ───────────────────────────────────────
+def _launch_window():
+    """Open the pywebview native window. Returns True on success.
+
+    The whole point: if WebView2 / pywebview can't initialize, we DON'T crash —
+    we return False so the caller opens a browser tab instead (legacy behavior).
+    The biggest documented failure mode is the runtime missing on a clean
+    machine, where the error can surface async deep in COM at start(); we wrap
+    both create_window and start() and treat any failure as "use the browser".
+    """
+    global _window
+    try:
+        import webview
+    except Exception as e:
+        _log(f"pywebview import failed ({e}); using browser fallback.")
+        return False
+
+    start_target = _splash_url() or URL
+    try:
+        _window = webview.create_window(
+            'TikTok MC Integrator',
+            url=start_target,
+            width=1180,
+            height=780,
+            min_size=(900, 600),
+            maximized=True,
+            confirm_close=False,
+            js_api=CloseApi(),
+            text_select=True,
+        )
+        _window.events.closing += _on_window_closing
+        _log(f"Native window created (target={start_target}).")
+    except Exception as e:
+        _log(f"webview.create_window failed ({e}); using browser fallback.")
+        _log(traceback.format_exc())
+        _window = None
+        return False
+
+    # Kick off the Python-side readiness poll that swaps splash → dashboard.
+    # Only needed when we actually showed the splash; if we loaded URL directly
+    # (splash missing) the page is already the app.
+    if start_target != URL:
+        threading.Thread(target=_wait_then_load, daemon=True).start()
+
+    try:
+        # Blocks on the MAIN thread until the window closes. Prefer the
+        # edgechromium (WebView2) backend; pywebview auto-selects on Windows.
+        webview.start()
+        _log("Native window closed by user.")
+        return True
+    except Exception as e:
+        _log(f"webview.start failed ({e}); using browser fallback.")
+        _log(traceback.format_exc())
+        _window = None
+        return False
+
+
+# ── Entry point ────────────────────────────────────────────────────────────────
+if __name__ == '__main__':
+    _log("=== TikTok MC Integrator starting ===")
+
+    # Ensure profiles/config exist before Flask starts.
+    try:
+        ensure_profiles_setup()
+    except Exception as e:
+        _log(f"ensure_profiles_setup failed: {e}")
+
+    # Start song queue worker.
+    try:
+        from spotify_handler import start_song_queue_worker
+        start_song_queue_worker()
+        _log("Song queue worker started.")
+    except Exception as e:
+        _log(f"Failed to start song queue worker: {e}")
+
+    # One-time TTS cold-start warmup. No audio playback, no recurring timer.
+    try:
+        if start_tts_warmup_once():
+            _log("TTS warmup started.")
+    except Exception as e:
+        _log(f"TTS warmup failed to start: {e}")
+
+    # Start Flask (waitress) in a background daemon thread.
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    _log(f"Flask serving on {URL} (background thread).")
+
+    # Start the tray icon on its own (detached) thread.
+    try:
+        _start_tray()
+    except Exception as e:
+        _log(f"Tray failed to start: {e}")
+
+    _log("Opening native window...")
+    ok = _launch_window()
+
+    if not ok:
+        # Fallback path: behave like the old launcher — open a browser tab and
+        # keep the process alive so Flask + tray keep serving (incl. OBS overlays).
+        _log("Falling back to browser; keeping server alive.")
+        try:
+            webbrowser.open(URL)
+        except Exception as e:
+            _log(f"webbrowser.open failed: {e}")
+        # Park the main thread so daemons keep running.
+        try:
+            flask_thread.join()
+        except KeyboardInterrupt:
+            _log("Interrupted; exiting.")
+            os._exit(0)
+    else:
+        # Native window closed = user wants out. Exit the whole process so the
+        # daemon threads (Flask, worker) and tray don't linger.
+        _log("Window closed; shutting down process.")
+        os._exit(0)

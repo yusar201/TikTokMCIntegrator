@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Setup — TikTok MC Integrator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --wood: #5a3c20;
+    --wood-lt: #8a5e34;
+    --wood-dk: #2e1d0f;
+    --bg-base: #14181f;
+    --bg-surface: #262b38;
+    --bg-elevated: #313747;
+    --bg-input: #1b1f29;
+    --text: #f2e6cf;
+    --text-muted: #b8a98a;
+    --cyan: #25f4ee;
+    --pink: #fe2c55;
+    --success: #4ade80;
+    --border: #3a4152;
+  }
+  html, body {
+    min-height: 100vh;
+    background: var(--bg-base);
+    background-image:
+      radial-gradient(circle at 18% 18%, rgba(37,244,238,.07), transparent 42%),
+      radial-gradient(circle at 82% 82%, rgba(254,44,85,.07), transparent 42%),
+      linear-gradient(160deg, #14181f 0%, #1b212c 100%);
+    font-family: 'Pixelify Sans', 'Trebuchet MS', sans-serif;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    width: 100%;
+    max-width: 560px;
+    background: var(--bg-surface);
+    padding: 32px 36px 28px;
+    box-shadow:
+      inset 0 0 0 2px var(--wood-lt),
+      inset 0 0 0 6px var(--wood),
+      0 4px 0 rgba(0,0,0,.45),
+      0 6px 20px rgba(0,0,0,.45);
+    border-radius: 4px;
+  }
+  .head { text-align: center; margin-bottom: 22px; }
+  .head h1 {
+    font-size: 26px; letter-spacing: 1px;
+    background: linear-gradient(135deg, var(--cyan), var(--pink));
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .head p { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
+
+  /* Step dots */
+  .dots { display: flex; justify-content: center; gap: 8px; margin: 16px 0 22px; }
+  .dot {
+    width: 12px; height: 12px; border-radius: 2px;
+    background: var(--wood-dk); box-shadow: inset 0 0 0 2px var(--wood);
+    transition: background .2s;
+  }
+  .dot.active { background: linear-gradient(180deg, var(--cyan), #1aa39e); }
+  .dot.done   { background: var(--success); }
+
+  .step { display: none; animation: fade .25s ease; }
+  .step.active { display: block; }
+  @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  .step h2 { font-size: 19px; margin-bottom: 6px; }
+  .step .desc { color: var(--text-muted); font-size: 13px; margin-bottom: 18px; line-height: 1.5; }
+
+  label { display: block; font-size: 13px; margin: 14px 0 6px; color: var(--text-muted); }
+  input[type=text], input[type=password], input[type=number] {
+    width: 100%; padding: 11px 12px;
+    background: var(--bg-input); color: var(--text);
+    border: none; box-shadow: inset 0 0 0 2px var(--wood);
+    border-radius: 3px; font-family: inherit; font-size: 15px;
+  }
+  input:focus { outline: none; box-shadow: inset 0 0 0 2px var(--cyan); }
+  .row { display: flex; gap: 12px; }
+  .row .col-host { flex: 2; }
+  .row .col-port { flex: 1; }
+
+  .toggle { display: flex; align-items: center; gap: 10px; margin-top: 8px; cursor: pointer; }
+  .toggle input { width: 18px; height: 18px; accent-color: #1aa39e; }
+  .toggle span { font-size: 14px; color: var(--text); }
+
+  .at { position: relative; }
+  .at input { padding-left: 26px; }
+  .at::before {
+    content: '@'; position: absolute; left: 11px; top: 50%;
+    transform: translateY(-50%); color: var(--text-muted); font-size: 15px;
+  }
+
+  .nav { display: flex; justify-content: space-between; margin-top: 26px; gap: 12px; }
+  button {
+    font-family: inherit; font-size: 15px; padding: 11px 22px;
+    border: none; border-radius: 3px; cursor: pointer; color: #fff;
+    box-shadow: 0 3px 0 rgba(0,0,0,.4); transition: transform .08s;
+  }
+  button:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0,0,0,.4); }
+  .btn-back { background: var(--bg-elevated); color: var(--text-muted); }
+  .btn-next { background: linear-gradient(135deg, #1aa39e, #25f4ee); color: #06231f; }
+  .btn-finish { background: linear-gradient(135deg, var(--success), #22c55e); color: #052e16; }
+  .btn-back:disabled { opacity: 0; pointer-events: none; }
+
+  .skip { background: none; box-shadow: none; color: var(--text-muted); font-size: 12px; text-decoration: underline; padding: 6px; }
+  .err { color: var(--pink); font-size: 12px; margin-top: 8px; min-height: 14px; }
+  .ok-msg { text-align: center; padding: 20px 0; }
+  .ok-msg .big { font-size: 44px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="head">
+      <h1>Welcome</h1>
+      <p>Let's get your TikTok MC Integrator set up. Takes about a minute.</p>
+    </div>
+    <div class="dots">
+      <div class="dot active" data-dot="0"></div>
+      <div class="dot" data-dot="1"></div>
+      <div class="dot" data-dot="2"></div>
+      <div class="dot" data-dot="3"></div>
+    </div>
+
+    <!-- Step 0: TikTok -->
+    <div class="step active" data-step="0">
+      <h2>TikTok account</h2>
+      <p class="desc">The TikTok username whose LIVE stream the bot connects to. No password needed — it reads your public live events.</p>
+      <label>TikTok username</label>
+      <div class="at"><input type="text" id="tiktok_username" placeholder="yourusername" autocomplete="off"></div>
+      <div class="err" id="err0"></div>
+    </div>
+
+    <!-- Step 1: Minecraft RCON -->
+    <div class="step" data-step="1">
+      <h2>Minecraft server (RCON)</h2>
+      <p class="desc">RCON lets the bot send commands to your server. Enable <code>enable-rcon=true</code> in server.properties and set a password there.</p>
+      <div class="row">
+        <div class="col-host">
+          <label>RCON host</label>
+          <input type="text" id="rcon_host" placeholder="127.0.0.1" value="127.0.0.1" autocomplete="off">
+        </div>
+        <div class="col-port">
+          <label>Port</label>
+          <input type="number" id="rcon_port" placeholder="25575" value="25575">
+        </div>
+      </div>
+      <label>RCON password</label>
+      <input type="password" id="rcon_password" placeholder="your rcon password" autocomplete="off">
+      <div class="err" id="err1"></div>
+    </div>
+
+    <!-- Step 2: Spotify -->
+    <div class="step" data-step="2">
+      <h2>Spotify (optional)</h2>
+      <p class="desc">Enable song requests and queue control. You can connect your Spotify account from the dashboard after setup — this just turns the feature on.</p>
+      <label class="toggle">
+        <input type="checkbox" id="spotify_enabled">
+        <span>Enable Spotify song queue</span>
+      </label>
+      <div class="err" id="err2"></div>
+    </div>
+
+    <!-- Step 3: Done -->
+    <div class="step" data-step="3">
+      <div class="ok-msg">
+        <div class="big">✅</div>
+        <h2>All set!</h2>
+        <p class="desc">Saving your settings and opening the dashboard…</p>
+      </div>
+    </div>
+
+    <div class="nav">
+      <button class="btn-back" id="backBtn" disabled>Back</button>
+      <div style="flex:1"></div>
+      <button class="skip" id="skipBtn" style="display:none">Skip</button>
+      <button class="btn-next" id="nextBtn">Next</button>
+    </div>
+  </div>
+
+<script>
+  var TOTAL_INPUT_STEPS = 3; // steps 0..2 are input; 3 is the finish screen
+  var step = 0;
+  var steps = document.querySelectorAll('.step');
+  var dots = document.querySelectorAll('.dot');
+  var backBtn = document.getElementById('backBtn');
+  var nextBtn = document.getElementById('nextBtn');
+  var skipBtn = document.getElementById('skipBtn');
+
+  function render() {
+    steps.forEach(function (s, i) { s.classList.toggle('active', i === step); });
+    dots.forEach(function (d, i) {
+      d.classList.toggle('active', i === step);
+      d.classList.toggle('done', i < step);
+    });
+    backBtn.disabled = (step === 0);
+    // Spotify step is optional → offer a Skip shortcut.
+    skipBtn.style.display = (step === 2) ? 'inline-block' : 'none';
+    if (step === TOTAL_INPUT_STEPS) {
+      nextBtn.style.display = 'none';
+      backBtn.style.display = 'none';
+      submit();
+    } else if (step === TOTAL_INPUT_STEPS - 1) {
+      nextBtn.textContent = 'Finish';
+      nextBtn.className = 'btn-finish';
+    } else {
+      nextBtn.textContent = 'Next';
+      nextBtn.className = 'btn-next';
+    }
+  }
+
+  function clearErr() { document.querySelectorAll('.err').forEach(function (e) { e.textContent = ''; }); }
+
+  function validate() {
+    clearErr();
+    if (step === 0) {
+      var u = document.getElementById('tiktok_username').value.trim();
+      if (!u) { document.getElementById('err0').textContent = 'Enter your TikTok username to continue.'; return false; }
+    }
+    if (step === 1) {
+      var h = document.getElementById('rcon_host').value.trim();
+      var p = document.getElementById('rcon_port').value;
+      if (!h) { document.getElementById('err1').textContent = 'RCON host is required (use 127.0.0.1 if local).'; return false; }
+      if (!p) { document.getElementById('err1').textContent = 'RCON port is required (default 25575).'; return false; }
+    }
+    return true;
+  }
+
+  nextBtn.addEventListener('click', function () {
+    if (!validate()) return;
+    if (step < TOTAL_INPUT_STEPS) { step++; render(); }
+  });
+  backBtn.addEventListener('click', function () {
+    if (step > 0) { step--; render(); }
+  });
+  skipBtn.addEventListener('click', function () {
+    document.getElementById('spotify_enabled').checked = false;
+    step++; render();
+  });
+
+  function submit() {
+    var payload = {
+      tiktok_username: document.getElementById('tiktok_username').value.trim(),
+      rcon_host: document.getElementById('rcon_host').value.trim(),
+      rcon_port: document.getElementById('rcon_port').value,
+      rcon_password: document.getElementById('rcon_password').value,
+      spotify_enabled: document.getElementById('spotify_enabled').checked
+    };
+    fetch('/api/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(function (r) { return r.json(); })
+    .then(function () { setTimeout(function () { window.location.href = '/'; }, 700); })
+    .catch(function () {
+      // On failure, drop the user into the dashboard anyway rather than trapping them.
+      setTimeout(function () { window.location.href = '/'; }, 1200);
+    });
+  }
+
+  // Enter key advances.
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && step < TOTAL_INPUT_STEPS) { e.preventDefault(); nextBtn.click(); }
+  });
+
+  render();
+</script>
+</body>
+</html>

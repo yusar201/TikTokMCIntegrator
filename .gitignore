@@ -13,6 +13,7 @@ active_profile.txt
 available_gifts.json
 active_streaks.json
 stream_state.json
+/data/oneblock_objective_rush_state.json
 
 # Spotify auth
 song_spotify_token.json
@@ -26,6 +27,7 @@ build/
 dist/
 release/
 *.spec
+!TikTokMCIntegrator.spec
 __pycache__/
 *.pyc
 *.pyo
@@ -63,5 +65,37 @@ superfan_log.json
 # Temp/scratch files
 2.24.0
 
-# Profile data
+# Profile data / credentials / runtime state
 profiles/
+config/
+data/
+logs/
+assets/avatar_cache/
+assets/reports/
+assets/tts/
+assets/gift_assets/*.json
+
+# Local test/build output and recovery snapshots
+release_test/
+build_backup/
+*.bak
+*.bak.*
+*.bak-*
+.overlay-backups/
+.song-backups/
+sketches/
+session-log-*.md
+.logo_datauri.txt
+
+# Python test/cache output
+.pytest_cache/
+**/__pycache__/
+
+# Local debug probes that use live credentials or network calls
+test_send_chat.py
+test_signing.py
+test_user_attr.py
+test_user_attr2.py
+
+# PyInstaller local specs generated outside the maintained project spec
+bot.spec
