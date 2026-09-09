@@ -5039,8 +5039,3 @@ body[data-skin="pixel"] .song-feedback-user { color: var(--px-green) !important;
 .roulette-save-state[data-state="error"] { color: #c25b5b; }
 .roulette-save-state[data-state="editing"],
 .roulette-save-state[data-state="saving"] { opacity: 0.7; font-style: italic; }
-.roulette-autosave-note {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-style: italic;
-}
