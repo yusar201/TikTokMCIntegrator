@@ -5396,24 +5396,26 @@ function rouletteChimeAt(ctx, t0) {
   });
 }
 
-// Schedules `count` decelerating ticks spanning totalMs, then the land chime.
+// Schedules decelerating ticks spanning totalMs, then the land chime.
+// Fixed absolute rhythm (not a fixed tick count): opens at ~70ms rat-a-tat
+// and grows ~12% per tick, so EVERY spin starts punchy like the 2s one and
+// only the tail stretches. Longer spins get MORE ticks, never lazier ones.
 // Returns the end offset (seconds) so callers can close the context.
-function rouletteRollSynth(ctx, tStart, totalMs, count) {
-  const weights = [];
-  let weightSum = 0;
-  for (let i = 0; i < count; i++) {
-    const w = 0.045 + 0.11 * Math.pow(count > 1 ? i / (count - 1) : 0, 1.8);
-    weights.push(w); weightSum += w;
+function rouletteRollSynth(ctx, tStart, totalMs) {
+  const end = tStart + totalMs / 1000;
+  let t = tStart;
+  let gap = 0.07;
+  let ticks = 0;
+  for (;;) {
+    rouletteTickAt(ctx, t);
+    ticks++;
+    t += gap;
+    gap *= 1.12;
+    if (t >= end || ticks > 200) break;
   }
-  const scale = weightSum > 0 ? (totalMs / 1000) / weightSum : 0;
-  let delay = 0;
-  for (let i = 0; i < count; i++) {
-    rouletteTickAt(ctx, tStart + delay);
-    delay += weights[i] * scale;
-  }
-  const tLand = tStart + delay + 0.12;
+  const tLand = end + 0.12;
   rouletteChimeAt(ctx, tLand);
-  return delay + 0.8;
+  return (tLand - tStart) + 0.8;
 }
 
 // ── Slot sound preview (same synth as the overlay) ──
@@ -5422,8 +5424,8 @@ function playRouletteSoundPreview() {
   if (!AC) { showToast('Web Audio not available', 'error'); return; }
   const ctx = new AC();
   const play = () => {
-    // Fixed ~1.5s demo roll: 14 clicks decelerating (mimics the reel easing).
-    const endOffset = rouletteRollSynth(ctx, ctx.currentTime, 1500, 14);
+    // Fixed ~1.5s demo roll with the same tension curve as a real spin.
+    const endOffset = rouletteRollSynth(ctx, ctx.currentTime, 1500);
     setTimeout(() => ctx.close(), endOffset * 1000);
   };
   // Click on the button IS a user gesture — resume then play.
@@ -5441,7 +5443,7 @@ function playRouletteTestSpinAudio(landDelayMs) {
   const totalMs = Math.max(600, landDelayMs);
   const ctx = new AC();
   const play = () => {
-    const endOffset = rouletteRollSynth(ctx, ctx.currentTime, totalMs, 14);
+    const endOffset = rouletteRollSynth(ctx, ctx.currentTime, totalMs);
     setTimeout(() => ctx.close(), endOffset * 1000);
   };
   if (ctx.state === 'suspended') ctx.resume().then(play); else play();

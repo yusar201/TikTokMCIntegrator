@@ -1171,20 +1171,20 @@ async function rlChime() {
   });
 }
 
-function rlStartTicks(durationMs, rowCount) {
+function rlStartTicks(durationMs) {
   rlStopTicks();
   const ctx = rlAudio();
   if (!ctx) return;
   const startPerf = performance.now();
+  let gap = 70;
+  let nextTickAt = 0;
   const step = () => {
     const elapsed = performance.now() - startPerf;
     if (elapsed >= durationMs) { rlStopTicks(); return; }
-    const p = Math.min(1, elapsed / durationMs);
-    const eased = 1 - Math.pow(1 - p, 2.2);
-    const visibleRow = Math.min(rowCount - 1, Math.floor(eased * (rowCount - 1)));
-    if (visibleRow !== rlLastTickRow) {
-      rlLastTickRow = visibleRow;
+    if (elapsed >= nextTickAt) {
       rlTick();
+      nextTickAt += gap;
+      gap *= 1.12;
     }
     rlTickTimer = requestAnimationFrame(step);
   };
@@ -1258,7 +1258,7 @@ function rlStartSpin(data) {
     finish();
   } else {
     strip.style.willChange = 'transform';
-    rlStartTicks(durationMs, strip.children.length);
+    rlStartTicks(durationMs);
     requestAnimationFrame(() => {
       strip.style.transition = 'transform ' + durationMs.toFixed(0) + 'ms cubic-bezier(.15,.85,.25,1)';
       strip.style.transform = 'translate3d(0, ' + (-distance) + 'px, 0)';
