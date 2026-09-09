@@ -1318,7 +1318,7 @@ def preview_sound():
 @app.route("/overlay-demo/<overlay_type>")
 def overlay_demo_page(overlay_type):
     """Demo overlay with dark background for preview."""
-    valid_types = ['chat', 'gifts', 'follows', 'superfan', 'topgift', 'topstreak', 'topshowcase', 'topgifter', 'song', 'coingoal', 'giftgoal', 'oneblock']
+    valid_types = ['chat', 'gifts', 'follows', 'superfan', 'topgift', 'topstreak', 'topshowcase', 'topgifter', 'song', 'coingoal', 'giftgoal', 'oneblock', 'roulette']
     if overlay_type not in valid_types:
         return "Invalid overlay type", 404
     return render_template("overlay_demo.html", overlay_type=overlay_type)
@@ -1327,7 +1327,7 @@ def overlay_demo_page(overlay_type):
 @app.route("/overlay/<overlay_type>")
 def overlay_page(overlay_type):
     """Serve overlay pages for OBS browser sources."""
-    valid_types = ['chat', 'gifts', 'follows', 'superfan', 'topgift', 'topstreak', 'topshowcase', 'topgifter', 'song', 'coingoal', 'giftgoal', 'oneblock']
+    valid_types = ['chat', 'gifts', 'follows', 'superfan', 'topgift', 'topstreak', 'topshowcase', 'topgifter', 'song', 'coingoal', 'giftgoal', 'oneblock', 'roulette']
     if overlay_type not in valid_types:
         return "Invalid overlay type", 404
     return render_template("overlay.html", overlay_type=overlay_type)

@@ -477,6 +477,40 @@ html, body {
 .tg-wrap { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10; pointer-events:none; }
 .ts-wrap { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10; pointer-events:none; }
 
+/* ===== TOP GIFT LAYOUT VARIANTS (2026-08-19, additive — begin) =====
+   Same as overlay.html but scoped to the simpler column-base card. */
+body[data-tglayout="left"] .tg-card {
+  flex-direction: row !important;
+  align-items: center !important;
+  text-align: left !important;
+}
+body[data-tglayout="left"] .tg-card .tg-info {
+  align-items: flex-start !important;
+  text-align: left !important;
+}
+body[data-tglayout="center"] .tg-card {
+  flex-direction: column !important;
+  align-items: center !important;
+  text-align: center !important;
+  gap: 8px !important;
+}
+body[data-tglayout="center"] .tg-card .tg-info {
+  align-items: center !important;
+  text-align: center !important;
+}
+body[data-tglayout="center"] .tg-card .tg-gift-row { justify-content: center !important; }
+body[data-tglayout="right"] .tg-card {
+  flex-direction: row-reverse !important;
+  align-items: center !important;
+  text-align: right !important;
+}
+body[data-tglayout="right"] .tg-card .tg-info {
+  align-items: flex-end !important;
+  text-align: right !important;
+}
+body[data-tglayout="right"] .tg-card .tg-gift-row { justify-content: flex-end !important; }
+/* ===== TOP GIFT LAYOUT VARIANTS (end) ===== */
+
 /* ============ TOP GIFTER PODIUM (Stardew Valley Design) ============ */
 :root {
   --gold-p: #e5a93b; --gold-d: #9e661b; --gold-l: #f7d57c;
@@ -488,42 +522,39 @@ html, body {
   --diamond-base: #5dd3d7; --diamond-grid: #2e8a93; --diamond-light: #7edee1; --diamond-border: #1e5e68;
   --goldblock-base: #fcee4d; --goldblock-grid: #b88115; --goldblock-light: #fde756; --goldblock-border: #8a6510;
 }
-.podium-wrap { position:fixed; bottom:30px; left:50%; transform:translateX(-50%); pointer-events:none; z-index:10; opacity:0; transition:opacity 0.5s ease; display:flex; flex-direction:column; align-items:center; gap:14px; }
-.podium-wrap.visible { opacity:1; }
-.podium-banner { background:#f3cca1; border:4px solid var(--border-dark); padding:10px 28px; transform:skew(-2deg); box-shadow:0 6px 0 rgba(0,0,0,0.3); position:relative; }
-.podium-banner::before,.podium-banner::after { content:''; position:absolute; top:50%; z-index:-1; width:16px; height:80%; background:#dca373; border:3px solid var(--border-dark); }
-.podium-banner::before { left:-20px; transform:translateY(-50%) skewY(10deg); }
-.podium-banner::after { right:-20px; transform:translateY(-50%) skewY(-10deg); }
-.podium-banner-text { font-family:var(--font-pixel); font-size:14px; color:#b52a1c; letter-spacing:1px; margin:0; text-shadow:1px 1px 0 #fff,-1px -1px 0 #fff,2px 2px 0 #5c1109; }
-.podium-stage { display:flex; align-items:flex-end; justify-content:center; gap:12px; }
-.column-wrapper { display:flex; flex-direction:column; align-items:center; position:relative; animation:podiumSlide 0.6s cubic-bezier(0.34,1.56,0.64,1) both; }
-.column-wrapper:nth-child(1) { animation-delay:0.08s; }
-.column-wrapper:nth-child(2) { animation-delay:0s; }
-.column-wrapper:nth-child(3) { animation-delay:0.16s; }
-@keyframes podiumSlide { from{opacity:0;transform:translateY(30px)} to{opacity:1;transform:translateY(0)} }
-.crown-container { margin-bottom:8px; filter:drop-shadow(3px 3px 0 rgba(0,0,0,0.4)); animation:crownBob 2s ease-in-out infinite; }
-@keyframes crownBob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
-.avatar-frame { width:80px; height:80px; overflow:hidden; background:#111; box-sizing:border-box; box-shadow:0 6px 0 rgba(0,0,0,0.4); }
-.avatar-frame.rank-2,.avatar-frame.rank-3 { width:72px; height:72px; }
-.avatar-frame img { width:100%; height:100%; object-fit:cover; image-rendering:pixelated; }
-.avatar-fallback { width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:700;color:#f3cca1;font-family:var(--font-pixel);background:#1a0e06;text-shadow:2px 2px 0 #000; }
-.frame-1st { border:6px solid var(--netherite-border); outline:4px solid var(--netherite-light); }
-.frame-2nd { border:6px solid var(--diamond-border); outline:4px solid var(--diamond-light); }
-.frame-3rd { border:6px solid var(--goldblock-border); outline:4px solid var(--goldblock-light); }
-.podium-username { font-family:var(--font-pixel); font-size:10px; color:#fff; margin:8px 0 4px; max-width:140px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:center; text-shadow:2px 2px 0 #000,-1px -1px 0 #000; }
-.score-badge { display:flex; align-items:center; gap:4px; background:rgba(0,0,0,0.65); padding:5px 10px; margin-bottom:8px; border:2px solid var(--border-dark); font-family:var(--font-pixel); font-size:9px; color:#ffeb54; }
-.score-star { color:#ffca00; font-size:10px; text-shadow:1px 1px 0 #000; }
-.podium-block { border:3px solid var(--border-dark); width:120px; position:relative; display:flex; flex-direction:column; justify-content:flex-start; align-items:center; padding-top:14px; box-sizing:border-box; }
-.podium-1st { height:140px; background-color:var(--netherite-base); background-image:repeating-linear-gradient(90deg,var(--netherite-grid) 0px,var(--netherite-grid) 2px,transparent 2px,transparent 30px),repeating-linear-gradient(0deg,var(--netherite-grid) 0px,var(--netherite-grid) 2px,transparent 2px,transparent 30px),repeating-linear-gradient(45deg,#3d434a 0px,#3d434a 4px,#4a5058 4px,#4a5058 8px); box-shadow:inset 0 6px 0 var(--netherite-light),inset 0 -4px 0 var(--netherite-grid),0 8px 0 rgba(0,0,0,0.4); border:3px solid var(--netherite-border); image-rendering:pixelated; }
-.podium-2nd { height:100px; background-color:var(--diamond-base); background-image:repeating-linear-gradient(90deg,var(--diamond-grid) 0px,var(--diamond-grid) 2px,transparent 2px,transparent 30px),repeating-linear-gradient(0deg,var(--diamond-grid) 0px,var(--diamond-grid) 2px,transparent 2px,transparent 30px),repeating-linear-gradient(45deg,#4bbcc4 0px,#4bbcc4 4px,#6edde1 4px,#6edde1 8px); box-shadow:inset 0 6px 0 var(--diamond-light),inset 0 -4px 0 var(--diamond-grid),0 8px 0 rgba(0,0,0,0.3); border:3px solid var(--diamond-border); image-rendering:pixelated; }
-.podium-3rd { height:70px; background-color:var(--goldblock-base); background-image:repeating-linear-gradient(90deg,var(--goldblock-grid) 0px,var(--goldblock-grid) 2px,transparent 2px,transparent 30px),repeating-linear-gradient(0deg,var(--goldblock-grid) 0px,var(--goldblock-grid) 2px,transparent 2px,transparent 30px),repeating-linear-gradient(45deg,#e6c938 0px,#e6c938 4px,#f9d939 4px,#f9d939 8px); box-shadow:inset 0 6px 0 var(--goldblock-light),inset 0 -4px 0 var(--goldblock-grid),0 8px 0 rgba(0,0,0,0.3); border:3px solid var(--goldblock-border); image-rendering:pixelated; }
-.plaque { border:2px solid var(--border-dark); box-shadow:inset -2px -2px 0 rgba(0,0,0,0.25),inset 2px 2px 0 rgba(255,255,255,0.15); font-family:var(--font-pixel); font-size:9px; padding:5px 10px; text-align:center; }
-.podium-1st .plaque { background:var(--netherite-light); color:#c8d0d8; }
-.podium-2nd .plaque { background:var(--diamond-light); color:var(--diamond-border); }
-.podium-3rd .plaque { background:var(--goldblock-light); color:var(--goldblock-border); }
-.pulse .podium-username { animation:namePulse 0.5s ease-out; }
-@keyframes namePulse { 0%{transform:scale(1)} 50%{transform:scale(1.12);color:#fbbf24} 100%{transform:scale(1)} }
+/* ===== TOP GIFT/LIKE LEADERBOARD (rotating list) ===== */
+.lb-wrap { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); width:380px; pointer-events:none; z-index:10; opacity:0; transition:opacity 0.5s ease; display:flex; flex-direction:column; gap:6px; font-family:var(--font-pixel); }
+.lb-wrap.visible { opacity:1; }
+.lb-wrap.preview-mode { bottom:auto; top:12px; }
+.lb-header { align-self:center; display:flex; padding:4px; background:rgba(26,14,6,0.92); border:3px solid var(--border-dark); box-shadow:0 4px 0 rgba(0,0,0,0.35); }
+.lb-tab { padding:6px 16px; font-size:11px; color:#9a7b5f; border:2px solid transparent; transition:all 0.25s ease; white-space:nowrap; }
+.lb-tab.active { background:var(--goldblock-base); color:#5c3a00; border-color:var(--goldblock-border); text-shadow:1px 1px 0 rgba(255,255,255,0.35); }
+.lb-list { display:flex; flex-direction:column; gap:4px; }
+.lb-row { display:flex; align-items:center; gap:10px; padding:6px 12px 6px 8px; background:rgba(26,14,6,0.88); border:2px solid var(--border-dark); border-left:6px solid #6d3b19; }
+.lb-row.lb-new { animation:lbRowIn 0.4s ease both; }
+@keyframes lbRowIn { from{opacity:0;transform:translateX(-14px)} to{opacity:1;transform:translateX(0)} }
+.lb-row:nth-child(1) { border-left-color:var(--goldblock-base); background:rgba(60,40,6,0.92); }
+.lb-row:nth-child(2) { border-left-color:var(--diamond-light); }
+.lb-row:nth-child(3) { border-left-color:var(--goldblock-grid); }
+.lb-rank { width:26px; font-size:12px; color:#f3cca1; text-align:center; flex-shrink:0; text-shadow:1px 1px 0 #000; }
+.lb-row:nth-child(1) .lb-rank { color:var(--goldblock-base); }
+.lb-row:nth-child(2) .lb-rank { color:var(--diamond-light); }
+.lb-row:nth-child(3) .lb-rank { color:#dcae6b; }
+.lb-avatar { width:38px; height:38px; flex-shrink:0; border:3px solid var(--border-dark); overflow:hidden; background:#111; box-shadow:0 3px 0 rgba(0,0,0,0.35); }
+.lb-row:nth-child(1) .lb-avatar { border-color:var(--goldblock-border); }
+.lb-row:nth-child(2) .lb-avatar { border-color:var(--diamond-border); }
+.lb-avatar img { width:100%; height:100%; object-fit:cover; image-rendering:pixelated; }
+.lb-avatar-fb { width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:15px;color:#f3cca1;background:#1a0e06; }
+.lb-crown { position:absolute; top:-13px; left:50%; transform:translateX(-50%); filter:drop-shadow(2px 2px 0 rgba(0,0,0,0.45)); animation:crownBob 2s ease-in-out infinite; z-index:2; }
+.lb-name { flex:1; min-width:0; font-size:10px; color:#ff9ecb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-shadow:2px 2px 0 #000; }
+.lb-row:nth-child(1) .lb-name { color:#ffd76a; }
+.lb-score { display:flex; align-items:center; gap:5px; flex-shrink:0; font-size:11px; color:#fff; text-shadow:2px 2px 0 #000; }
+.lb-score-icon { font-size:12px; line-height:1; }
+/* When score is hidden, keep row aligned without gaps */
+.lb-row .lb-score:empty { min-width:0; padding-left:0; }
 /* ===== END TOP GIFTER ===== */
+@keyframes crownBob { 0%,100%{transform:translateX(-50%) translateY(0)} 50%{transform:translateX(-50%) translateY(-4px)} }
+
 
 /* ============ GIFT GOAL OVERLAY ============ */
 .gg-wrap {
@@ -776,6 +807,67 @@ html, body {
 @keyframes chatLegendBreathe { 0%,100%{filter:none;} 50%{filter:brightness(1.08);} }
 /* ===== CHAT PIXEL TIER RESTYLE END ===== */
 
+/* ===== GIFT ROULETTE (single-row slot, Minecraft theme) — mirrors overlay.html ===== */
+.rl-wrap {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 24px;
+  display: none;
+  z-index: 50;
+}
+.rl-wrap.rl-visible { display: block; }
+.rl-card {
+  width: 360px;
+  box-sizing: border-box;
+  background: #1d1f24;
+  border: 3px solid #3a3d44;
+  box-shadow: inset 0 0 0 2px #101114, 4px 4px 0 rgba(0,0,0,.55);
+  image-rendering: pixelated;
+  font-family: 'Minecraftia', monospace;
+}
+.rl-header { display: flex; align-items: center; justify-content: space-between; padding: 4px 10px 2px 10px; }
+.rl-title {
+  font-size: 13px; color: #ffd75e; text-shadow: 2px 2px 0 #000;
+  -webkit-text-fill-color: #ffd75e; -webkit-text-stroke: 0 transparent; letter-spacing: 1px;
+}
+.rl-trigger {
+  font-size: 11px; color: #fff; text-shadow: 1px 1px 0 #000;
+  -webkit-text-fill-color: #fff; -webkit-text-stroke: 0 transparent;
+  max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rl-body { padding: 0 8px 8px 8px; }
+.rl-window {
+  height: 52px; overflow: hidden; position: relative;
+  background: #101114; border: 2px solid #2a2d33; box-shadow: inset 2px 2px 0 rgba(0,0,0,.6);
+}
+.rl-strip { will-change: transform; }
+.rl-row {
+  height: 52px; box-sizing: border-box; display: flex; align-items: center; gap: 10px;
+  padding: 0 10px; filter: grayscale(1) brightness(.6);
+}
+.rl-row.rl-winner { filter: none; background: rgba(255, 215, 94, .14); }
+.rl-icon-wrap {
+  width: 40px; height: 40px; flex: 0 0 40px; display: flex; align-items: center; justify-content: center;
+  background: #000; border: 2px solid #3a3d44; box-sizing: border-box; overflow: hidden;
+}
+.rl-icon-wrap img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; border-radius: 0; display: block; }
+.rl-icon-fallback { font-size: 20px; color: #666; line-height: 1; }
+.rl-texts { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rl-label {
+  font-size: 13px; color: #fff; text-shadow: 1px 1px 0 #000;
+  -webkit-text-fill-color: #fff; -webkit-text-stroke: 0 transparent;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 250px;
+}
+.rl-gift-name {
+  font-size: 10px; color: #9aa0ab; text-shadow: 1px 1px 0 #000;
+  -webkit-text-fill-color: #9aa0ab; -webkit-text-stroke: 0 transparent;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 250px;
+}
+.rl-winner .rl-label { color: #ffd75e; -webkit-text-fill-color: #ffd75e; }
+.rl-row.rl-winner .rl-icon-wrap { border-color: #ffd75e; }
+/* ===== GIFT ROULETTE END ===== */
+
 </style>
 </head>
 <body>
@@ -848,83 +940,12 @@ html, body {
   </div>
 </div>
 {% elif overlay_type == 'topgifter' %}
-<div class="podium-wrap" id="podium-wrap">
-  <div class="podium-banner">
-    <div class="podium-banner-text">⭐ GIFTER'S STAND ⭐</div>
+<div class="lb-wrap" id="lb-wrap">
+  <div class="lb-header">
+    <div class="lb-tab" id="lb-tab-gifters">🪙 TOP GIFTERS</div>
+    <div class="lb-tab" id="lb-tab-likers">❤️ TOP LIKERS</div>
   </div>
-  <div class="podium-stage">
-    <div class="column-wrapper" id="col-2" style="opacity:0">
-      <div class="avatar-frame frame-2nd rank-2" id="av-2">
-        <img id="av-img-2" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="" style="display:none">
-        <div class="avatar-fallback">?</div>
-      </div>
-      <div class="podium-username" id="name-2">---</div>
-      <div class="score-badge"><span class="score-star">⭐</span><span id="score-2">0</span></div>
-      <div class="podium-block podium-2nd"><div class="plaque">2nd</div></div>
-    </div>
-    <div class="column-wrapper" id="col-1" style="opacity:0">
-      <div class="crown-container">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 8" style="width:44px;height:32px;shape-rendering:crispEdges;">
-          <rect x="5" y="0" width="1" height="1" fill="#311405"/>
-          <rect x="0" y="1" width="1" height="1" fill="#311405"/>
-          <rect x="4" y="1" width="1" height="1" fill="#311405"/>
-          <rect x="5" y="1" width="1" height="1" fill="#f7d57c"/>
-          <rect x="6" y="1" width="1" height="1" fill="#311405"/>
-          <rect x="10" y="1" width="1" height="1" fill="#311405"/>
-          <rect x="0" y="2" width="2" height="1" fill="#311405"/>
-          <rect x="3" y="2" width="1" height="1" fill="#311405"/>
-          <rect x="4" y="2" width="3" height="1" fill="#f7d57c"/>
-          <rect x="7" y="2" width="1" height="1" fill="#311405"/>
-          <rect x="9" y="2" width="2" height="1" fill="#311405"/>
-          <rect x="0" y="3" width="1" height="1" fill="#311405"/>
-          <rect x="1" y="3" width="1" height="1" fill="#f7d57c"/>
-          <rect x="2" y="3" width="2" height="1" fill="#311405"/>
-          <rect x="4" y="3" width="1" height="1" fill="#f7d57c"/>
-          <rect x="5" y="3" width="1" height="1" fill="#4287f5"/>
-          <rect x="6" y="3" width="1" height="1" fill="#f7d57c"/>
-          <rect x="7" y="3" width="2" height="1" fill="#311405"/>
-          <rect x="9" y="3" width="1" height="1" fill="#9e661b"/>
-          <rect x="10" y="3" width="1" height="1" fill="#311405"/>
-          <rect x="0" y="4" width="1" height="1" fill="#311405"/>
-          <rect x="1" y="4" width="2" height="1" fill="#f7d57c"/>
-          <rect x="3" y="4" width="1" height="1" fill="#311405"/>
-          <rect x="4" y="4" width="1" height="1" fill="#f7d57c"/>
-          <rect x="5" y="4" width="1" height="1" fill="#a6c8ff"/>
-          <rect x="6" y="4" width="1" height="1" fill="#f7d57c"/>
-          <rect x="7" y="4" width="1" height="1" fill="#311405"/>
-          <rect x="8" y="4" width="2" height="1" fill="#9e661b"/>
-          <rect x="10" y="4" width="1" height="1" fill="#311405"/>
-          <rect x="0" y="5" width="1" height="1" fill="#311405"/>
-          <rect x="1" y="5" width="7" height="1" fill="#f7d57c"/>
-          <rect x="8" y="5" width="2" height="1" fill="#9e661b"/>
-          <rect x="10" y="5" width="1" height="1" fill="#311405"/>
-          <rect x="0" y="6" width="1" height="1" fill="#311405"/>
-          <rect x="1" y="6" width="4" height="1" fill="#f7d57c"/>
-          <rect x="5" y="6" width="1" height="1" fill="#e5a93b"/>
-          <rect x="6" y="6" width="2" height="1" fill="#f7d57c"/>
-          <rect x="8" y="6" width="2" height="1" fill="#9e661b"/>
-          <rect x="10" y="6" width="1" height="1" fill="#311405"/>
-          <rect x="1" y="7" width="9" height="1" fill="#311405"/>
-        </svg>
-      </div>
-      <div class="avatar-frame frame-1st rank-1" id="av-1">
-        <img id="av-img-1" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="" style="display:none">
-        <div class="avatar-fallback">?</div>
-      </div>
-      <div class="podium-username" id="name-1">---</div>
-      <div class="score-badge"><span class="score-star">⭐</span><span id="score-1">0</span></div>
-      <div class="podium-block podium-1st"><div class="plaque">1st PLACE</div></div>
-    </div>
-    <div class="column-wrapper" id="col-3" style="opacity:0">
-      <div class="avatar-frame frame-3rd rank-3" id="av-3">
-        <img id="av-img-3" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="" style="display:none">
-        <div class="avatar-fallback">?</div>
-      </div>
-      <div class="podium-username" id="name-3">---</div>
-      <div class="score-badge"><span class="score-star">⭐</span><span id="score-3">0</span></div>
-      <div class="podium-block podium-3rd"><div class="plaque">3rd</div></div>
-    </div>
-  </div>
+  <div class="lb-list" id="lb-list"></div>
 </div>
 {% elif overlay_type == 'giftgoal' %}
 <div class="gg-wrap" id="gg-wrap" style="display:flex;">
@@ -955,6 +976,20 @@ html, body {
     </div>
   </div>
 </div>
+{% elif overlay_type == 'roulette' %}
+<div class="rl-wrap" id="rl-wrap" aria-hidden="true">
+  <div class="rl-card">
+    <div class="rl-header">
+      <span class="rl-title">ROULETTE</span>
+      <span class="rl-trigger" id="rl-trigger"></span>
+    </div>
+    <div class="rl-body">
+      <div class="rl-window">
+        <div class="rl-strip" id="rl-strip"></div>
+      </div>
+    </div>
+  </div>
+</div>
 {% endif %}
 
 <script>
@@ -979,7 +1014,7 @@ document.addEventListener('DOMContentLoaded', () => {
     tsWrap.style.left = '50%';
     tsWrap.style.transform = 'translate(-50%, -50%)';
   }
-  const pWrap = document.querySelector('.podium-wrap');
+  const pWrap = document.querySelector('.lb-wrap');
   if (pWrap) {
     pWrap.style.top = '50%';
     pWrap.style.left = '50%';
@@ -1002,6 +1037,7 @@ async function fetchData() {
     else if (OVERLAY_TYPE === 'topstreak') url = '/api/stats/gifts';
     else if (OVERLAY_TYPE === 'topgifter') url = '/api/stats/topgifter';
     else if (OVERLAY_TYPE === 'giftgoal') url = '/api/stats/giftgoal';
+    else if (OVERLAY_TYPE === 'roulette') url = '/api/stats/roulette';
     else if (OVERLAY_TYPE === 'oneblock') url = 'http://127.0.0.1:5943/oneblock';
     else return;
 
@@ -1018,6 +1054,8 @@ async function fetchData() {
       handleTopGifter(data);
     } else if (OVERLAY_TYPE === 'giftgoal') {
       handleGiftGoal(data);
+    } else if (OVERLAY_TYPE === 'roulette') {
+      handleRoulette(data);
     } else if (OVERLAY_TYPE === 'oneblock') {
       renderOneBlock(data);
     } else {
@@ -1025,6 +1063,111 @@ async function fetchData() {
     }
   } catch(e) {}
 }
+
+// ===== GIFT ROULETTE (mirrors overlay.html) =====
+let rlCurrentSpinId = null;
+let rlHideTimer = null;
+
+function rlHide() {
+  const wrap = document.getElementById('rl-wrap');
+  if (wrap) { wrap.classList.remove('rl-visible'); wrap.setAttribute('aria-hidden', 'true'); }
+  const strip = document.getElementById('rl-strip');
+  if (strip) strip.innerHTML = '';
+  rlCurrentSpinId = null;
+  if (rlHideTimer) { clearTimeout(rlHideTimer); rlHideTimer = null; }
+}
+
+function rlBuildRow(entry) {
+  const row = document.createElement('div');
+  row.className = 'rl-row';
+  const iconWrap = document.createElement('div');
+  iconWrap.className = 'rl-icon-wrap';
+  const iconUrl = String(entry.icon_url || '');
+  if (iconUrl) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.onerror = function() {
+      img.remove();
+      const fb = document.createElement('span');
+      fb.className = 'rl-icon-fallback';
+      fb.textContent = '?';
+      iconWrap.appendChild(fb);
+    };
+    img.src = iconUrl;
+    iconWrap.appendChild(img);
+  } else {
+    const fb = document.createElement('span');
+    fb.className = 'rl-icon-fallback';
+    fb.textContent = '?';
+    iconWrap.appendChild(fb);
+  }
+  const texts = document.createElement('div');
+  texts.className = 'rl-texts';
+  const label = document.createElement('div');
+  label.className = 'rl-label';
+  label.textContent = String(entry.label || '');
+  const giftName = document.createElement('div');
+  giftName.className = 'rl-gift-name';
+  giftName.textContent = '#' + String(entry.gift_id || '');
+  texts.appendChild(label);
+  texts.appendChild(giftName);
+  row.appendChild(iconWrap);
+  row.appendChild(texts);
+  return row;
+}
+
+function rlStartSpin(data) {
+  const wrap = document.getElementById('rl-wrap');
+  const strip = document.getElementById('rl-strip');
+  const trigger = document.getElementById('rl-trigger');
+  if (!wrap || !strip) return;
+  rlCurrentSpinId = data.spin_id;
+  if (trigger) {
+    const user = String((data.trigger || {}).user || '');
+    trigger.textContent = user ? ('from ' + user) : '';
+  }
+  strip.innerHTML = '';
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  const reel = Array.isArray(data.reel) ? data.reel : [];
+  reel.forEach(idx => { const e = entries[idx]; if (e) strip.appendChild(rlBuildRow(e)); });
+  if (!strip.children.length) { rlHide(); return; }
+  wrap.classList.add('rl-visible');
+  wrap.setAttribute('aria-hidden', 'false');
+  const rowH = 52;
+  const distance = (strip.children.length - 1) * rowH;
+  const now = Date.now() / 1000;
+  const landsAt = Number(data.lands_at) || now;
+  const durationMs = Math.max(0, (landsAt - now) * 1000);
+  strip.style.transition = 'none';
+  strip.style.transform = 'translate3d(0, 0, 0)';
+  void strip.offsetHeight;
+  const finish = () => {
+    const rows = strip.children;
+    if (rows.length) rows[rows.length - 1].classList.add('rl-winner');
+    strip.style.willChange = 'auto';
+  };
+  if (durationMs <= 0) {
+    strip.style.transform = 'translate3d(0, ' + (-distance) + 'px, 0)';
+    finish();
+  } else {
+    strip.style.willChange = 'transform';
+    requestAnimationFrame(() => {
+      strip.style.transition = 'transform ' + durationMs.toFixed(0) + 'ms cubic-bezier(.15,.85,.25,1)';
+      strip.style.transform = 'translate3d(0, ' + (-distance) + 'px, 0)';
+    });
+    setTimeout(finish, durationMs + 50);
+  }
+  if (rlHideTimer) clearTimeout(rlHideTimer);
+  const hideAt = Number(data.hide_at) || (landsAt + 4);
+  rlHideTimer = setTimeout(rlHide, Math.max(1000, (hideAt - now) * 1000));
+}
+
+function handleRoulette(data) {
+  if (!data || typeof data !== 'object') return;
+  if (data.status === 'idle') return;
+  if (data.spin_id && data.spin_id !== rlCurrentSpinId) rlStartSpin(data);
+}
+// ===== GIFT ROULETTE END =====
 
 function obShortBlock(id) {
   if (!id) return 'unknown';
@@ -1279,6 +1422,25 @@ let currentTopDiamond = 0;
 let lastBurstDiamond = 0;
 let tgSparklesCreated = false;
 
+function applyTopGiftLayout(layout) {
+  // ===== TOP GIFT LAYOUT VARIANTS (2026-08-19, additive) =====
+  const valid = { left: 1, center: 1, right: 1 };
+  const chosen = String(layout || 'left').toLowerCase();
+  if (valid[chosen]) {
+    document.body.setAttribute('data-tglayout', chosen);
+  } else {
+    document.body.removeAttribute('data-tglayout');
+  }
+}
+
+if (OVERLAY_TYPE === 'topgift') {
+  // Fetch the dashboard-chosen layout once (demo keeps its own full-log data source).
+  fetch('/api/stats/topgift/layout', { cache: 'no-store' })
+    .then(r => r.json())
+    .then(d => applyTopGiftLayout(d && d.layout))
+    .catch(() => {});
+}
+
 function handleTopGift(gifts) {
   if (!gifts || gifts.length === 0) return;
   // Find the gift with the highest single-gift value (diamond_count), not total coins
@@ -1492,69 +1654,183 @@ function resetTopStreak() {
   document.getElementById('ts-streak-count').textContent = '0';
 }
 
-// ========== TOP GIFTER (Stardew Valley) ==========
-let prevGifterHash = '';
+// ========== TOP GIFT/LIKE LEADERBOARD (rotating list) ==========
+let lbData = { gifters: [], likers: [] };
+let lbMode = 'gifters';
+let lbRenderedMode = '';
+let lbLastHash = '';
+// Amount visibility — populated from the poll payload each tick; defaults
+// false (hidden) so amounts stay off until the dashboard enables them.
+let lbShowAmounts = { show_gift_amounts: false, show_like_amounts: false };
 
-function handleTopGifter(data) {
-  const wrap = document.getElementById('podium-wrap');
-  if (!wrap) return;
+function lbRender() {
+  const wrap = document.getElementById('lb-wrap');
+  const list = document.getElementById('lb-list');
+  const tabG = document.getElementById('lb-tab-gifters');
+  const tabL = document.getElementById('lb-tab-likers');
+  if (!wrap || !list || !tabG || !tabL) return;
 
-  if (!data || !Array.isArray(data) || data.length === 0) {
+  tabG.classList.toggle('active', lbMode === 'gifters');
+  tabL.classList.toggle('active', lbMode === 'likers');
+
+  const modeChanged = (lbRenderedMode !== lbMode);
+  lbRenderedMode = lbMode;
+
+  const entries = lbMode === 'gifters' ? lbData.gifters : lbData.likers;
+  const icon = lbMode === 'gifters' ? '🪙' : '❤️';
+  const scoreKey = lbMode === 'gifters' ? 'total_coins' : 'total_likes';
+
+  if (!Array.isArray(entries) || entries.length === 0) {
     wrap.classList.remove('visible');
     return;
   }
+  wrap.classList.add('visible');
 
-  const hash = JSON.stringify(data.map(g => `${g.nick}:${g.total_coins}:${g.avatar_url || ''}`));
-  if (hash === prevGifterHash) {
-    wrap.classList.add('visible');
-    return;
-  }
-  prevGifterHash = hash;
+  const rows = entries.slice(0, 10);
 
-  for (let i = 0; i < 3; i++) {
-    const entry = data[i] || null;
-    const idx = i + 1;
-    const col = document.getElementById('col-' + idx);
-    const nameEl = document.getElementById('name-' + idx);
-    const scoreEl = document.getElementById('score-' + idx);
-    const frame = document.getElementById('av-' + idx);
-    if (!col || !nameEl || !scoreEl || !frame) continue;
+  // Keyed reconciliation (2026-08-05 flicker fix): score-only updates patch
+  // existing rows IN PLACE — no DOM rebuild, so the lbRowIn entrance animation
+  // never replays on every like/coin tick. Only genuinely new rows and board
+  // rotations (modeChanged) get the staggered slide-in.
+  if (modeChanged) list.innerHTML = '';
+  while (list.children.length > rows.length) list.removeChild(list.lastChild);
 
-    if (!entry) { col.style.opacity = '0'; continue; }
-    col.style.opacity = '1';
-
-    nameEl.textContent = entry.nick || '???';
-    scoreEl.textContent = entry.total_coins ? entry.total_coins.toLocaleString() : '0';
-
-    const img = frame.querySelector('img');
-    const fb = frame.querySelector('.avatar-fallback');
-    const initial = (entry.nick || '?').charAt(0).toUpperCase();
-    if (fb) fb.textContent = initial;
-    if (entry.avatar_url) {
-      if (img) {
-        img.onload = function() {
-          this.style.display = '';
-          if (fb) fb.style.display = 'none';
-        };
-        img.onerror = function() {
-          this.style.display = 'none';
-          if (fb) fb.style.display = '';
-        };
-        img.src = escAttr(entry.avatar_url);
-        img.style.display = 'none';
-      }
-      if (fb) fb.style.display = '';
+  rows.forEach((e, i) => {
+    const num = parseInt(e[scoreKey], 10) || 0;
+    
+    // Apply visibility from the live payload flags (both default OFF/hidden).
+    let showAmount = false;
+    if (lbMode === 'gifters') {
+      showAmount = !!lbShowAmounts.show_gift_amounts;
     } else {
-      if (img) { img.style.display = 'none'; img.onerror = null; img.onload = null; }
-      if (fb) { fb.textContent = initial; fb.style.display = ''; }
+      showAmount = !!lbShowAmounts.show_like_amounts;
+    }
+    const scoreHtml = showAmount 
+      ? '<span class="lb-score-icon">' + icon + '</span>' + num.toLocaleString()
+      : '';
+    const nick = e.nick || '???';
+
+    const row = list.children[i];
+    if (row) {
+      // Patch in place — no animation restart.
+      row.querySelector('.lb-rank').textContent = i + 1;
+      const nameEl = row.querySelector('.lb-name');
+      nameEl.textContent = nick;
+      nameEl.title = nick;
+      row.querySelector('.lb-score').innerHTML = scoreHtml;
+      lbPatchAvatar(row.querySelector('.lb-avatar'), e, i === 0);
+      return;
     }
 
-    col.classList.remove('pulse');
-    void col.offsetWidth;
-    col.classList.add('pulse');
-  }
-  wrap.classList.add('visible');
+    // Brand-new row — build once, animate entrance once.
+    const newRow = document.createElement('div');
+    newRow.className = 'lb-row lb-new';
+    newRow.style.animationDelay = (i * 0.04) + 's';
+
+    const rank = document.createElement('div');
+    rank.className = 'lb-rank';
+    rank.textContent = i + 1;
+
+    const avWrap = document.createElement('div');
+    avWrap.className = 'lb-avatar';
+    avWrap.style.position = 'relative';
+    lbPatchAvatar(avWrap, e, i === 0);
+
+    const name = document.createElement('div');
+    name.className = 'lb-name';
+    name.textContent = nick;
+    name.title = nick;
+
+    const score = document.createElement('div');
+    score.className = 'lb-score';
+    score.innerHTML = scoreHtml;
+
+    newRow.appendChild(rank);
+    newRow.appendChild(avWrap);
+    newRow.appendChild(name);
+    newRow.appendChild(score);
+    list.appendChild(newRow);
+  });
 }
+
+// Avatar subtree: pixel crown on rank 1 + initials fallback + img with
+// onload/onerror. Rebuilds only when the avatar_url identity changes;
+// otherwise just refreshes the initial letter.
+function lbPatchAvatar(avWrap, e, isTop) {
+  if (!avWrap) return;
+  const curCrown = avWrap.querySelector('.lb-crown');
+  if (isTop && !curCrown) {
+    const crown = document.createElement('div');
+    crown.className = 'lb-crown';
+    crown.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 8" style="width:26px;height:19px;shape-rendering:crispEdges;">'
+      + '<rect x="0" y="1" width="1" height="1" fill="#311405"/><rect x="5" y="0" width="1" height="1" fill="#311405"/><rect x="10" y="1" width="1" height="1" fill="#311405"/>'
+      + '<rect x="0" y="2" width="2" height="1" fill="#311405"/><rect x="4" y="1" width="3" height="1" fill="#f7d57c"/><rect x="9" y="2" width="2" height="1" fill="#311405"/>'
+      + '<rect x="0" y="3" width="11" height="1" fill="#f7d57c"/>'
+      + '<rect x="0" y="4" width="11" height="1" fill="#e5a93b"/>'
+      + '<rect x="0" y="5" width="1" height="1" fill="#311405"/><rect x="1" y="5" width="9" height="1" fill="#f7d57c"/><rect x="10" y="5" width="1" height="1" fill="#311405"/>'
+      + '<rect x="1" y="6" width="9" height="1" fill="#311405"/></svg>';
+    avWrap.insertBefore(crown, avWrap.firstChild);
+  } else if (!isTop && curCrown) {
+    curCrown.remove();
+  }
+
+  const want = e.avatar_url || '';
+  if (avWrap.getAttribute('data-avatar-key') === want) {
+    const fb = avWrap.querySelector('.lb-avatar-fb');
+    if (fb) fb.textContent = (e.nick || '?').charAt(0).toUpperCase();
+    return;
+  }
+  avWrap.setAttribute('data-avatar-key', want);
+  const oldImg = avWrap.querySelector('img');
+  if (oldImg) oldImg.remove();
+
+  const initial = (e.nick || '?').charAt(0).toUpperCase();
+  let fb = avWrap.querySelector('.lb-avatar-fb');
+  if (!fb) {
+    fb = document.createElement('div');
+    fb.className = 'lb-avatar-fb';
+    avWrap.appendChild(fb);
+  }
+  fb.textContent = initial;
+  fb.style.display = '';
+  if (want) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.onload = function() { fb.style.display = 'none'; };
+    img.onerror = function() { fb.style.display = ''; };
+    img.src = want;
+    avWrap.appendChild(img);
+  }
+}
+
+function handleTopGifter(data) {
+  if (!data || typeof data !== 'object') return;
+  const gifters = Array.isArray(data.gifters) ? data.gifters : [];
+  const likers = Array.isArray(data.likers) ? data.likers : [];
+  const showGift = !!data.show_gift_amounts;
+  const showLike = !!data.show_like_amounts;
+  // Include the visibility flags in the hash so a dashboard toggle repaints
+  // even when the board data itself hasn't changed.
+  const hash = JSON.stringify([gifters, likers, showGift, showLike]);
+  if (hash === lbLastHash) return;
+  lbLastHash = hash;
+  lbData = { gifters, likers };
+  lbShowAmounts = { show_gift_amounts: showGift, show_like_amounts: showLike };
+  lbRender();
+}
+
+setInterval(() => {
+  const hasG = lbData.gifters.length > 0;
+  const hasL = lbData.likers.length > 0;
+  if (hasG && hasL) {
+    lbMode = lbMode === 'gifters' ? 'likers' : 'gifters';
+  } else if (hasG) {
+    lbMode = 'gifters';
+  } else if (hasL) {
+    lbMode = 'likers';
+  }
+  lbRender();
+}, 5000);
 
 // ============ GIFT GOAL OVERLAY ============
 let ggDisplayed = 0;
@@ -1822,7 +2098,3 @@ setInterval(fetchData, 1500);
 </script>
 </body>
 </html>
-
-/* Chat badge natural width after tier normalization */
-.chat-badge { min-width:0 !important; width:auto !important; }
-.chat-tier-chip { width:64px !important; }

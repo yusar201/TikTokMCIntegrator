@@ -8,11 +8,10 @@ spotify_bp = Blueprint('spotify', __name__)
 
 @spotify_bp.route("/config", methods=["GET"])
 def get_song_config():
-    """Get the song configuration."""
-    cfg = sh.load_config()
-    # Strip secrets for display
-    safe = dict(cfg)
-    safe["spotify_client_secret"] = "••••" if safe.get("spotify_client_secret") else ""
+    """Get song-request settings; OAuth application identity is not user config."""
+    safe = dict(sh.load_config())
+    for obsolete in ("spotify_client_id", "spotify_client_secret", "spotify_redirect_uri"):
+        safe.pop(obsolete, None)
     return jsonify(safe)
 
 
@@ -23,11 +22,6 @@ def update_song_config():
     cfg = sh.load_config()
     for key in data:
         if key in cfg:
-            # Don't overwrite secrets with empty/masked values
-            if key == "spotify_client_secret" and not data[key]:
-                continue
-            if key == "spotify_client_id" and not data[key]:
-                continue
             cfg[key] = data[key]
     sh.save_config(cfg)
     return jsonify({"status": "success", "message": "Song config saved!"})
@@ -35,20 +29,18 @@ def update_song_config():
 
 @spotify_bp.route("/auth-url", methods=["GET"])
 def get_spotify_auth_url():
-    """Get the Spotify authorization URL to start OAuth."""
-    cfg = sh.load_config()
-    client_id = cfg.get("spotify_client_id", "")
-    redirect_uri = cfg.get("spotify_redirect_uri", "http://localhost:5000/api/spotify/callback")
-    if not client_id:
-        return jsonify({"error": "Spotify Client ID not configured"}), 400
-    url = sh.get_auth_url(client_id, redirect_uri)
-    return jsonify({"url": url})
+    """Start one-click desktop OAuth using the bundled public app identity."""
+    result = sh.begin_pkce_authorization()
+    if "error" in result:
+        return jsonify(result), 500
+    return jsonify(result)
 
 
 @spotify_bp.route("/callback", methods=["GET"])
 def spotify_callback():
     """Handle Spotify OAuth callback."""
     code = request.args.get("code")
+    state = request.args.get("state")
     error = request.args.get("error")
     print(f"[SPOTIFY] Callback received — code={'present' if code else 'missing'}, error={error}")
     if error:
@@ -56,12 +48,7 @@ def spotify_callback():
     if not code:
         return jsonify({"error": "No authorization code received"}), 400
 
-    cfg = sh.load_config()
-    client_id = cfg.get("spotify_client_id", "")
-    client_secret = cfg.get("spotify_client_secret", "")
-    redirect_uri = cfg.get("spotify_redirect_uri", "http://localhost:5000/api/spotify/callback")
-
-    result = sh.handle_callback(code, client_id, client_secret, redirect_uri)
+    result = sh.handle_pkce_callback(code, state)
     if "error" in result:
         return f"""
         <!DOCTYPE html>
@@ -76,13 +63,13 @@ def spotify_callback():
         </html>
         """, 400
 
-    # Redirect back to dashboard
+    # Tell the dashboard about the required device-activation step.
     return """
     <script>
       window.opener.postMessage({type: 'spotify-connected', status: 'success'}, '*');
       window.close();
     </script>
-    <p>Connected! You can close this window.</p>
+    <p>Spotify connected. Open Spotify and play any song once so the bot can use song commands. You can close this window.</p>
     """
 
 
@@ -92,14 +79,15 @@ def spotify_status():
     status = sh.get_connection_status()
     cfg = sh.load_config()
     status["enabled"] = cfg.get("enabled", True)
-    status["has_credentials"] = bool(cfg.get("spotify_client_id", ""))
+    status["auth_ready"] = bool(sh.get_spotify_client_id())
     return jsonify(status)
 
 
 @spotify_bp.route("/disconnect", methods=["POST"])
 def spotify_disconnect():
-    """Disconnect from Spotify."""
+    """Disconnect from Spotify and discard any unfinished login attempt."""
     sh.clear_token()
+    sh.clear_pending_oauth()
     return jsonify({"status": "success", "message": "Disconnected from Spotify"})
 
 

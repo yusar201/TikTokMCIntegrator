@@ -7,6 +7,7 @@ let giftIconMap = {};
 let giftNameMap = {};
 let streakDeltaSelected = [];
 let cachedAvailableGifts = [];
+let cachedAllGifts = [];
 let botRunning = false;
 let streamStartTime = null;
 let tickerCount = 0;
@@ -15,11 +16,24 @@ let spotifyConnected = false;
 let installedAddons = [];
 let selectedAddonId = null;
 let addonActionPresets = [];
-const OVERLAY_PREVIEW_TYPES = ['chat', 'gifts', 'follows', 'superfan', 'topshowcase', 'topgift', 'topstreak', 'song', 'coingoal', 'topgifter', 'giftgoal'];
+const OVERLAY_PREVIEW_TYPES = ['chat', 'gifts', 'follows', 'superfan', 'topshowcase', 'topgift', 'topstreak', 'song', 'coingoal', 'topgifter', 'giftgoal', 'roulette'];
 
 // ==========================================
 // NAVIGATION
 // ==========================================
+let giftStudioModule = null;
+let giftStudioLoad = null;
+async function activateGiftStudio() {
+  if (!giftStudioLoad) {
+    giftStudioLoad = import('/static/gift-studio/studio.js?v=11').then(mod => (giftStudioModule = mod));
+  }
+  await giftStudioLoad;
+  return giftStudioModule.activate();
+}
+function deactivateGiftStudio() {
+  if (giftStudioModule) giftStudioModule.deactivate();
+}
+
 function switchPanel(name) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -27,12 +41,16 @@ function switchPanel(name) {
   const nav = document.querySelector(`[data-panel="${name}"]`);
   if (panel) panel.classList.add('active');
   if (nav) nav.classList.add('active');
+  if (name === 'gift-studio') activateGiftStudio().catch(err => showToast(err.message || 'Gift Studio failed to open', 'error'));
+  else deactivateGiftStudio();
   // Overlay preview iframes are expensive WebView2 pages. Run them only while
   // this panel is visible and only when the user explicitly enables each one.
   if (name === 'overlays') initOverlayPreviews();
   else suspendOverlayPreviews();
   if (name === 'addons') loadAddons();
   if (name === 'tts') loadTtsConfig();
+  if (name === 'points') loadPoints();
+  if (name === 'roulette') initRoulettePanel();
 }
 
 // ==========================================
@@ -58,21 +76,69 @@ function updateBotStatusUI(isRunning, meta = {}) {
   const btn = document.getElementById('btn-toggle');
 
   botRunning = isRunning;
+
+  // Map the derived connection state to a display label + dot class.
+  const state = meta.state || (isRunning ? 'connecting' : 'offline');
+  const STATE_META = {
+    starting:    { cls: 'connecting', label: 'Starting…' },
+    connecting:  { cls: 'connecting', label: 'Connecting…' },
+    connected:   { cls: 'online',     label: 'Connected' },
+    reconnecting:{ cls: 'connecting', label: 'Reconnecting…' },
+    disconnected:{ cls: 'offline',    label: 'Disconnected' },
+    failed:      { cls: 'failed',     label: 'Failed' },
+    ended:       { cls: 'offline',    label: 'Offline' },
+    stopped:     { cls: 'offline',    label: 'Offline' },
+    offline:     { cls: 'offline',    label: 'Offline' },
+  };
+  const m = STATE_META[state] || STATE_META.offline;
+
+  dot.className = 'status-dot ' + m.cls;
+  text.textContent = m.label;
+
+  // Attach the error as a tooltip when present (e.g. retries exhausted).
+  if (meta.error) {
+    text.title = meta.error;
+    dot.title = meta.error;
+  } else {
+    text.title = '';
+    dot.title = '';
+  }
+
+  // Button reflects process liveness, not connection state: while the bot
+  // subprocess is running we must be able to stop it, even if it's still
+  // connecting or has failed to reach TikTok.
   if (isRunning) {
-    dot.className = 'status-dot online';
-    text.textContent = meta.external ? 'Streaming (Background)' : 'Streaming';
     btn.innerHTML = '<i class="fa-solid fa-stop"></i> Stop Bot';
     btn.className = 'btn btn-danger';
     btn.onclick = stopBot;
-    if (!streamStartTime) { streamStartTime = Date.now(); startTimer(); }
+    // Start/resume timer only when actually connected
+    if (state === 'connected') {
+      resumeTimerWhenConnected();
+    } else if (state === 'connecting' || state === 'starting' || state === 'reconnecting') {
+      // Timer does NOT start during these states; ensure it shows "--:--:--"
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = null;
+      document.getElementById('stream-timer').textContent = '--:--:--';
+    }
+    // Append "DEBUG MODE" suffix if LogOnlyMode is ON
+    const settings = meta.settings || {};
+    if (settings.LogOnlyMode) {
+      text.textContent = `${m.label} | DEBUG MODE`;
+    }
   } else {
-    dot.className = 'status-dot';
-    text.textContent = 'Offline';
     btn.innerHTML = '<i class="fa-solid fa-play"></i> Start Bot';
     btn.className = 'btn btn-primary';
     btn.onclick = startBot;
+    // Pause timer and accumulate any elapsed time so far
+    pauseTimer();
+    if (_timerState.totalElapsedSec === 0 && streamStartTime) {
+      _timerState.totalElapsedSec = Math.floor((Date.now() - streamStartTime) / 1000);
+    }
     streamStartTime = null;
-    document.getElementById('stream-timer').textContent = '--:--:--';
+    if (!_timerState.lastPauseMs) {
+      // Ensure display stays at accumulated time while stopped
+      document.getElementById('stream-timer').textContent = formatDuration(_timerState.totalElapsedSec);
+    }
   }
 }
 
@@ -82,17 +148,61 @@ function toggleBot() {
 
 // Timer
 let timerInterval = null;
-function startTimer() {
+// Keep this simple: we store `totalElapsedBeforeDisconnect` (seconds) when disconnected,
+// and `lastPauseTs` (Date.now() ms). resumeTime will accumulate across reconnects.
+let _timerState = { 
+  totalElapsedSec: 0, 
+  lastPauseMs: null,
+  startedNewStream: false  // Track if we've started a fresh stream (for reset logic)
+};
+
+function startTimerFromConnectedState() {
   if (timerInterval) clearInterval(timerInterval);
   timerInterval = setInterval(() => {
-    if (!streamStartTime) return;
-    const elapsed = Math.floor((Date.now() - streamStartTime) / 1000);
-    const h = Math.floor(elapsed / 3600);
-    const m = Math.floor((elapsed % 3600) / 60);
-    const s = elapsed % 60;
-    document.getElementById('stream-timer').textContent =
-      `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    if (!_timerState.totalElapsedSec && !_timerState.lastPauseMs && !streamStartTime) return;
+    if (_timerState.lastPauseMs) {
+      // Paused: show accumulated time only
+      document.getElementById('stream-timer').textContent = formatDuration(_timerState.totalElapsedSec);
+      return;
+    }
+    const elapsed = Math.floor((Date.now() - streamStartTime) / 1000) + _timerState.totalElapsedSec;
+    document.getElementById('stream-timer').textContent = formatDuration(elapsed);
   }, 1000);
+}
+
+function formatDuration(totalSeconds) {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+function pauseTimer() {
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
+  _timerState.lastPauseMs = Date.now();
+}
+
+function resumeTimerWhenConnected() {
+  // When connected, compute how much we had accumulated before this connect
+  // For simplicity on first connect, we just start counting from 0 and build up via accumulated time.
+  // We'll accumulate elapsed time each tick while running, then reset on disconnect.
+  _timerState.lastPauseMs = null;
+  // If room changed (new stream) or first connect, reset the timer completely
+  if (!_timerState.startedNewStream || !streamStartTime) {
+    _timerState.totalElapsedSec = 0;
+    streamStartTime = Date.now();
+    _timerState.startedNewStream = true;
+  } else {
+    // Reconnect to same stream - keep accumulating from where we left off
+    const now = Date.now();
+    const accumulated = Math.floor((now - streamStartTime) / 1000);
+    _timerState.totalElapsedSec += accumulated;
+    streamStartTime = now;
+  }
+  startTimerFromConnectedState();
 }
 
 // ==========================================
@@ -120,7 +230,7 @@ async function loadConfig() {
   }
 }
 
-async function saveConfigData() {
+async function saveConfigData(options = {}) {
   try {
     const res = await fetch('/api/config', {
       method: 'POST',
@@ -128,7 +238,7 @@ async function saveConfigData() {
       body: JSON.stringify(currentConfig)
     });
     const data = await res.json();
-    showToast(data.message, 'success');
+    showToast(options.successMessage || data.message || 'Configuration saved!', 'success');
   } catch (e) {
     showToast("Error saving config", 'error');
   }
@@ -149,8 +259,11 @@ async function startBot() {
     const res = await fetch('/api/bot/start', { method: 'POST' });
     const data = await res.json();
     if(data.status === 'success') {
-      updateBotStatusUI(true, data);
-      showToast('Bot started!', 'success');
+      // Don't jump to "online" — the bot subprocess is up but TikTok connection
+      // is still resolving. Show "connecting" and let checkBotStatus() poll the
+      // real state file until ConnectEvent lands.
+      updateBotStatusUI(true, { state: 'connecting' });
+      showToast('Bot starting…', 'info');
     } else {
       showToast(data.message, data.status === 'warning' ? 'info' : 'error');
       if (data.external) updateBotStatusUI(true, data);
@@ -167,6 +280,11 @@ async function stopBot() {
     if(data.status === 'success') {
       updateBotStatusUI(false);
       showToast('Bot stopped', 'info');
+      // Reset timer state on stop so new streams start from 0
+      _timerState.totalElapsedSec = 0;
+      streamStartTime = null;
+      _timerState.startedNewStream = false;
+      document.getElementById('stream-timer').textContent = '--:--:--';
     }
   } catch(e) {
     showToast("Failed to stop bot", 'error');
@@ -1218,6 +1336,7 @@ async function clearConsole() {
 // SIMULATED MINECRAFT CONSOLE
 // ==========================================
 let lastSimConsoleCount = 0;
+let lastSimConsoleRevision = '';
 async function fetchSimConsole() {
   try {
     const res = await fetch('/api/console/logs');
@@ -1233,11 +1352,12 @@ async function fetchSimConsole() {
       return;
     }
     // Change-detection + scroll-aware (same fix as fetchLogs)
-    if (data.logs.length !== lastSimConsoleCount) {
+    if (data.revision !== lastSimConsoleRevision) {
       const wasNearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 30;
       body.textContent = data.logs.join('\n');
       if (wasNearBottom) body.scrollTop = body.scrollHeight;
       lastSimConsoleCount = data.logs.length;
+      lastSimConsoleRevision = data.revision || '';
     }
   } catch (e) {}
 }
@@ -1277,6 +1397,7 @@ async function clearSimConsole() {
     const body = document.getElementById('sim-console-body');
     if (body) body.innerHTML = '<span style="opacity:0.5;">Cleared.</span>';
     lastSimConsoleCount = 0;
+    lastSimConsoleRevision = '';
   } catch (e) {}
 }
 
@@ -1315,6 +1436,20 @@ function populateSettings() {
         if (dbgLbl) dbgLbl.textContent = dbgChk.checked ? 'Enabled' : 'Disabled';
       });
       dbgChk._wired = true;
+    }
+  }
+  
+  // Log-Only Mode toggle (live-read by bot — takes effect mid-stream, no restart)
+  const logonlyChk = document.getElementById('log-only-mode');
+  const logonlyLbl = document.getElementById('log-only-mode-label');
+  if (logonlyChk) {
+    logonlyChk.checked = !!currentConfig.Settings.LogOnlyMode;
+    if (logonlyLbl) logonlyLbl.textContent = logonlyChk.checked ? 'Enabled' : 'Disabled';
+    if (!logonlyChk._wired) {
+      logonlyChk.addEventListener('change', () => {
+        if (logonlyLbl) logonlyLbl.textContent = logonlyChk.checked ? 'Enabled' : 'Disabled';
+      });
+      logonlyChk._wired = true;
     }
   }
   // ConnectorType radio
@@ -1420,6 +1555,11 @@ function saveSettings() {
   // Debug Mode
   const dbgChk = document.getElementById('debug-mode');
   currentConfig.Settings.DebugMode = !!(dbgChk && dbgChk.checked);
+  
+  // Log-Only Mode (Test Connection)
+  const logonlyChk = document.getElementById('log-only-mode');
+  currentConfig.Settings.LogOnlyMode = !!(logonlyChk && logonlyChk.checked);
+  
   // ConnectorType
   const forgeRadio = document.getElementById('connector-type-forge');
   const servertapRadio = document.getElementById('connector-type-servertap');
@@ -1990,6 +2130,103 @@ function populateGifts() {
   if (sortedCats.length === 0) {
     container.innerHTML = '<p class="form-hint" style="text-align:center;padding:40px;">No gifts configured yet. Click "Add Gift" to get started.</p>';
   }
+  populateGiftSimulator();
+}
+
+function populateGiftSimulator() {
+  const select = document.getElementById('gift-sim-select');
+  if (!select) return;
+  const previous = select.value;
+  const gifts = Object.keys(currentConfig.Gifts || {})
+    .filter(key => key.toLowerCase() !== 'globalactions')
+    .sort((a, b) => getGiftDisplayName(a).localeCompare(getGiftDisplayName(b)));
+  select.innerHTML = gifts.map(key => `<option value="${escHtml(key)}">${escHtml(getGiftDisplayName(key))}</option>`).join('');
+  if (gifts.includes(previous)) select.value = previous;
+  const list = document.getElementById('gift-sim-picker-list');
+  if (list) {
+    list.innerHTML = gifts.map(key => {
+      const name = getGiftDisplayName(key);
+      const icon = giftIconMap[key];
+      return `<button class="gift-sim-picker-option" type="button" role="option" data-gift-key="${escHtml(key)}" aria-selected="${select.value === key}">${icon ? `<img src="${escHtml(icon)}" alt="">` : '<span class="gift-sim-picker-fallback"><i class="fa-solid fa-gift"></i></span>'}<span class="gift-sim-picker-name">${escHtml(name)}</span><span class="gift-sim-picker-id">#${escHtml(key)}</span></button>`;
+    }).join('');
+    list.querySelectorAll('.gift-sim-picker-option').forEach(option => {
+      option.addEventListener('click', () => selectSimulatorGift(option.dataset.giftKey));
+    });
+  }
+  renderSimulatorGiftSelection();
+  const mc = currentConfig.Settings?.MinecraftUsername || 'not configured';
+  const mcLabel = document.getElementById('gift-sim-mc');
+  if (mcLabel) mcLabel.textContent = `{mc}: ${mc}`;
+  const button = document.getElementById('btn-simulate-gift');
+  if (button) button.disabled = gifts.length === 0;
+}
+
+function renderSimulatorGiftSelection() {
+  const select = document.getElementById('gift-sim-select');
+  const button = document.getElementById('gift-sim-picker-button');
+  if (!select || !button || !select.value) {
+    if (button) button.innerHTML = '<span class="gift-sim-picker-placeholder">Choose a gift</span><i class="fa-solid fa-chevron-down"></i>';
+    return;
+  }
+  const key = select.value;
+  const name = getGiftDisplayName(key);
+  const icon = giftIconMap[key];
+  button.innerHTML = `${icon ? `<img src="${escHtml(icon)}" alt="">` : '<span class="gift-sim-picker-fallback"><i class="fa-solid fa-gift"></i></span>'}<span class="gift-sim-picker-name">${escHtml(name)}</span><span class="gift-sim-picker-id">#${escHtml(key)}</span><i class="fa-solid fa-chevron-down"></i>`;
+  document.querySelectorAll('#gift-sim-picker-list .gift-sim-picker-option').forEach(option => option.setAttribute('aria-selected', String(option.dataset.giftKey === key)));
+}
+
+function selectSimulatorGift(key) {
+  const select = document.getElementById('gift-sim-select');
+  if (!select || !key) return;
+  select.value = key;
+  renderSimulatorGiftSelection();
+  closeSimulatorGiftPicker();
+}
+
+function toggleSimulatorGiftPicker() {
+  const list = document.getElementById('gift-sim-picker-list');
+  const button = document.getElementById('gift-sim-picker-button');
+  if (!list || !button) return;
+  const opening = list.hidden;
+  list.hidden = !opening;
+  button.setAttribute('aria-expanded', String(opening));
+}
+
+function closeSimulatorGiftPicker() {
+  const list = document.getElementById('gift-sim-picker-list');
+  const button = document.getElementById('gift-sim-picker-button');
+  if (list) list.hidden = true;
+  if (button) button.setAttribute('aria-expanded', 'false');
+}
+
+async function simulateGift() {
+  const select = document.getElementById('gift-sim-select');
+  const user = document.getElementById('gift-sim-user')?.value.trim() || '';
+  const amount = Number(document.getElementById('gift-sim-amount')?.value);
+  const button = document.getElementById('btn-simulate-gift');
+  const status = document.getElementById('gift-sim-status');
+  if (!select?.value || !user || !Number.isInteger(amount) || amount < 1 || amount > 10000) {
+    if (status) status.textContent = 'Choose a gift, enter a user, and use a whole amount from 1 to 10000.';
+    return;
+  }
+  button.disabled = true;
+  if (status) status.textContent = 'Running all configured actions…';
+  try {
+    const response = await fetch('/api/gifts/simulate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({gift_key: select.value, user, amount}),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `Simulation failed (${response.status})`);
+    if (status) status.textContent = `Ran ${result.actions} action${result.actions === 1 ? '' : 's'} for ${result.gift}.`;
+    showToast(`Simulated ${result.gift}: ${result.actions} actions`, 'success');
+  } catch (error) {
+    if (status) status.textContent = error.message;
+    showToast(error.message, 'error');
+  } finally {
+    button.disabled = !select.options.length;
+  }
 }
 
 function saveGifts() {
@@ -2315,7 +2552,7 @@ function closeGiftModal() {
   document.getElementById('modal-gift-description').value = '';
 }
 
-function saveGiftModal() {
+async function saveGiftModal() {
   const giftId = document.getElementById('modal-gift-id').value.trim();
   const displayName = document.getElementById('modal-gift-name').value.trim().toLowerCase();
   const newCategory = document.getElementById('modal-gift-category').value.trim();
@@ -2343,17 +2580,22 @@ function saveGiftModal() {
   if (description) currentConfig.GiftDescriptions[newKey] = description;
   else delete currentConfig.GiftDescriptions[newKey];
 
-  // Update streak delta from checkbox
+  // Update streak delta from checkbox and commit it before populateGifts(),
+  // which rebuilds the modal state from currentConfig.
   const sdChk = document.getElementById('modal-gift-streak-delta');
+  if (editingGiftKey && editingGiftKey !== newKey) {
+    streakDeltaSelected = streakDeltaSelected.filter(id => id !== String(editingGiftKey));
+  }
   if (sdChk && sdChk.checked) {
     if (!streakDeltaSelected.includes(newKey)) streakDeltaSelected.push(newKey);
   } else {
     streakDeltaSelected = streakDeltaSelected.filter(id => id !== newKey);
   }
+  currentConfig.StreakDeltaGifts = [...streakDeltaSelected];
 
   closeGiftModal();
   populateGifts();
-  showToast('Gift saved!', 'success');
+  return saveConfigData({ successMessage: 'Gift saved!' });
 }
 
 function deleteGiftModal() {
@@ -2376,7 +2618,9 @@ async function loadGiftIconMap() {
     const res = await fetch('/api/gifts/available');
     const gifts = await res.json();
     if (gifts && gifts.length > 0) {
-      cachedAvailableGifts = gifts;
+      // This preload exists only for name/icon lookup. Do not seed the modal's
+      // precise current-room pool with the full multi-region catalog.
+      cachedAllGifts = gifts;
       gifts.forEach(g => {
         const gid = String(g.id);
         if (g.name) giftNameMap[gid] = g.name.toLowerCase();
@@ -2387,42 +2631,98 @@ async function loadGiftIconMap() {
   } catch(e) {}
 }
 
+// Rebuild the catalog from every source: TikTok's room panel, all EulerStream
+// regions, Euler's full 2783-row catalog, and this app's own gift history.
+// TikTok's panel alone is only ~700 gifts and hides region-locked ones like
+// Game Controller, so the sync is the only way to see every gift.
+async function refreshGiftCatalog() {
+  const btn = document.getElementById('btn-refresh-gift-catalog');
+  if (!btn) return;
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Syncing...';
+  showToast('Syncing gift catalog from TikTok + all regions...', 'info');
+  try {
+    const res = await fetch('/api/gifts/refresh', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok || data.status !== 'ok') {
+      showToast((data.errors && data.errors[0]) || 'Gift catalog sync failed', 'error');
+      return;
+    }
+    cachedAvailableGifts = [];
+    cachedAllGifts = [];
+    await loadGiftIconMap();
+    const gained = data.added > 0 ? `+${data.added} new` : 'no new gifts';
+    showToast(`Gift catalog: ${data.after} gifts (${gained})`, 'success');
+    if (data.errors && data.errors.length) console.warn('Gift catalog sync notes:', data.errors);
+  } catch (e) {
+    showToast('Gift catalog sync failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
+
 async function fetchAvailableGifts() {
+  // Panel scope is exact: only gifts TikTok currently offers in this room.
+  // The full catalog remains available only through the explicit scope switch;
+  // never silently mix regional duplicate IDs into a current-room search.
   if (cachedAvailableGifts.length > 0) {
-    const group = document.getElementById('available-gifts-group');
-    group.style.display = 'block';
-    renderGiftChips(cachedAvailableGifts);
-    const searchInput = document.getElementById('gift-search-input');
-    searchInput.value = '';
-    searchInput.oninput = () => {
-      const q = searchInput.value.toLowerCase().trim();
-      const filtered = q ? cachedAvailableGifts.filter(g => g.name.includes(q) || String(g.id).includes(q)) : cachedAvailableGifts;
-      renderGiftChips(filtered);
-    };
+    showGiftPickerChips(cachedAvailableGifts);
     return;
   }
   try {
-    const res = await fetch('/api/gifts/available');
-    const gifts = await res.json();
-    const group = document.getElementById('available-gifts-group');
-    if (gifts && gifts.length > 0) {
-      cachedAvailableGifts = gifts;
-      gifts.forEach(g => {
+    const [roomRes, allRes] = await Promise.all([
+      fetch('/api/gifts/available?scope=panel'),
+      fetch('/api/gifts/available')
+    ]);
+    const roomGifts = await roomRes.json();
+    const allGifts = await allRes.json();
+    if (allGifts && allGifts.length > 0) {
+      allGifts.forEach(g => {
         const gid = String(g.id);
         if (g.name) giftNameMap[gid] = g.name.toLowerCase();
         if (g.icon) giftIconMap[gid] = g.icon;
       });
-      group.style.display = 'block';
-      renderGiftChips(gifts);
-      const searchInput = document.getElementById('gift-search-input');
-      searchInput.value = '';
-      searchInput.oninput = () => {
-        const q = searchInput.value.toLowerCase().trim();
-        const filtered = q ? cachedAvailableGifts.filter(g => g.name.includes(q) || String(g.id).includes(q)) : cachedAvailableGifts;
-        renderGiftChips(filtered);
-      };
-    } else { group.style.display = 'none'; }
+    }
+    if (roomGifts && roomGifts.length > 0) {
+      cachedAvailableGifts = roomGifts;
+      cachedAllGifts = allGifts;
+      showGiftPickerChips(roomGifts);
+    } else if (allGifts && allGifts.length > 0) {
+      cachedAvailableGifts = allGifts;
+      cachedAllGifts = allGifts;
+      showGiftPickerChips(allGifts);
+    } else {
+      document.getElementById('available-gifts-group').style.display = 'none';
+    }
   } catch (e) {}
+}
+
+function showGiftPickerChips(roomGifts) {
+  const group = document.getElementById('available-gifts-group');
+  group.style.display = 'block';
+  renderGiftChips(roomGifts);
+  const searchInput = document.getElementById('gift-search-input');
+  const scopeSelect = document.getElementById('gift-picker-scope');
+  const scopeNote = document.getElementById('gift-picker-scope-note');
+  searchInput.value = '';
+  if (scopeSelect) scopeSelect.value = 'panel';
+  const refresh = () => {
+    const q = searchInput.value.toLowerCase().trim();
+    const allMode = scopeSelect?.value === 'all';
+    let pool = allMode ? cachedAllGifts : cachedAvailableGifts;
+    if (q) pool = pool.filter(g => g.name.includes(q) || String(g.id).includes(q));
+    if (scopeNote) scopeNote.textContent = allMode
+      ? 'Showing the full catalog. IDs may be regional or unavailable in your room.'
+      : 'Showing only gifts TikTok currently offers in your room.';
+    searchInput.placeholder = allMode
+      ? 'Search all known gifts by name or ID...'
+      : 'Search gifts available in your current TikTok room...';
+    renderGiftChips(pool);
+  };
+  searchInput.oninput = refresh;
+  if (scopeSelect) scopeSelect.onchange = refresh;
 }
 
 function renderGiftChips(gifts) {
@@ -2435,7 +2735,7 @@ function renderGiftChips(gifts) {
     chip.innerHTML = `${gift.icon ? `<img src="${gift.icon}" alt="${gift.name}">` : '<i class="fa-solid fa-gift" style="color:var(--accent)"></i>'} <span class="chip-name">${gift.name}</span> <span class="chip-id">#${gift.id}</span> <span class="chip-coins">${gift.diamond_count}</span>`;
     list.appendChild(chip);
   });
-  if (gifts.length === 0) list.innerHTML = '<p style="opacity:0.5;padding:8px;">No gifts found</p>';
+  if (gifts.length === 0) list.innerHTML = '<p class="gift-picker-empty">No matching gift in your selected scope.</p>';
 }
 
 function selectAvailableGift(id, name, coins) {
@@ -2606,6 +2906,7 @@ async function switchProfile(name) {
     });
     await loadConfig();
     await loadProfiles();
+    document.dispatchEvent(new CustomEvent('gcs:profile-changed', {detail: {profile: name}}));
     closeProfileModal();
     showToast(`Switched to ${name}`, 'success');
   } catch(e) { showToast("Failed to switch profile", 'error'); }
@@ -2857,28 +3158,47 @@ document.addEventListener('DOMContentLoaded', () => {
   loadAddons();
   loadSongConfig();
   fetchSongHistory();
+  setupTopGifterToggles();
 
-  // Polling
+  // Low-overhead polling: skip hidden dashboard work and never overlap requests.
+  // This preserves each endpoint's cadence while preventing a slow response from
+  // creating concurrent fetches and extra CPU/network pressure.
   attachChatScrollHandler();
-  setInterval(checkBotStatus, 3000);
-  setInterval(fetchLogs, 1500);
-  setInterval(fetchViewerStats, 3000);
-  setInterval(fetchGiftLog, 2500);
-  setInterval(fetchFollowLog, 3000);
-  setInterval(fetchSuperfanLog, 2500);
-  setInterval(fetchChatLog, 2500);
-  setInterval(fetchSimConsole, 2000);
+  const scheduleLightPoll = (fn, intervalMs) => {
+    let inFlight = false;
+    return setInterval(async () => {
+      if (document.hidden || inFlight) return;
+      inFlight = true;
+      try { await fn(); } finally { inFlight = false; }
+    }, intervalMs);
+  };
+
+  scheduleLightPoll(checkBotStatus, 3000);
+  scheduleLightPoll(fetchLogs, 1500);
+  scheduleLightPoll(fetchViewerStats, 3000);
+  scheduleLightPoll(fetchGiftLog, 2500);
+  scheduleLightPoll(fetchFollowLog, 3000);
+  scheduleLightPoll(fetchSuperfanLog, 2500);
+  scheduleLightPoll(fetchChatLog, 2500);
+  scheduleLightPoll(fetchSimConsole, 2000);
   // Active streaks do not need sub-second hidden-dashboard polling.
-  setInterval(fetchActiveStreaks, 1000);
-  setInterval(fetchSongQueue, 3000);
-  setInterval(fetchSongHistory, 5000);
-  setInterval(fetchSpotifyStatus, 10000);
+  scheduleLightPoll(fetchActiveStreaks, 1000);
+  scheduleLightPoll(fetchSongQueue, 3000);
+  scheduleLightPoll(fetchSongHistory, 5000);
+  scheduleLightPoll(fetchSpotifyStatus, 10000);
 
   // Save buttons
   document.getElementById('btn-save-settings').addEventListener('click', saveSettings);
   document.getElementById('btn-save-events').addEventListener('click', saveEvents);
   document.getElementById('btn-save-gifts').addEventListener('click', saveGifts);
+  document.getElementById('btn-simulate-gift').addEventListener('click', simulateGift);
+  document.getElementById('gift-sim-picker-button').addEventListener('click', toggleSimulatorGiftPicker);
+  document.addEventListener('click', event => {
+    if (!event.target.closest('#gift-sim-picker')) closeSimulatorGiftPicker();
+  });
   document.getElementById('btn-add-gift').addEventListener('click', () => openGiftModal());
+  const btnSyncCatalog = document.getElementById('btn-refresh-gift-catalog');
+  if (btnSyncCatalog) btnSyncCatalog.addEventListener('click', refreshGiftCatalog);
   document.getElementById('btn-add-event').addEventListener('click', openAddEventModal);
   document.getElementById('btn-manage-profiles').addEventListener('click', openProfileModal);
 
@@ -2900,6 +3220,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (m.target.id === 'panel-events') renderEventsGrid();
         if (m.target.id === 'panel-gifts') populateGifts();
         if (m.target.id === 'panel-addons') loadAddons();
+        if (m.target.id === 'panel-console') { fetchLogs(); fetchSimConsole(); }
       }
     }
   });
@@ -3055,7 +3376,7 @@ function renderAddonDetail() {
       <div id="addon-health-result" class="addon-health-result muted">Click Test to ping the helper.</div>
     </div>
 
-    ${addon.id === 'oneblock' ? `
+    ${addon.id === 'survival_rush' ? `
     <div class="addon-detail-section objective-rush-section">
       <div class="addon-section-heading"><i class="fa-solid fa-flag-checkered"></i> Objective Rush</div>
       <div id="objective-rush-control" class="objective-rush-control"><div class="addon-empty small">Loading game state...</div></div>
@@ -3081,7 +3402,7 @@ function renderAddonDetail() {
           <div class="addon-action-info"><strong>${escHtml(a.name)}</strong><code>${escHtml(a.command || '')}</code><span>${escHtml(a.description || '')}</span></div>
           <div class="addon-action-buttons">
             <button class="btn btn-ghost btn-sm" onclick="copyAddonText('${encodeURIComponent(a.command || '')}')"><i class="fa-solid fa-copy"></i></button>
-            <button class="btn btn-primary btn-sm" onclick="testAddonCommand('${encodeURIComponent(a.command || '')}')"><i class="fa-solid fa-play"></i> Test</button>
+            ${a.id === 'survival_rush_gift_dragon' ? '<span class="addon-gift-only"><i class="fa-solid fa-gift"></i> Gift only</span>' : `<button class="btn btn-primary btn-sm" onclick="testAddonCommand('${encodeURIComponent(a.command || '')}')"><i class="fa-solid fa-play"></i> Test</button>`}
           </div>
         </div>`).join('') : '<div class="addon-empty small">No action presets in this add-on.</div>'}
       </div>
@@ -3098,59 +3419,84 @@ function renderAddonDetail() {
       <button class="btn btn-danger btn-sm" onclick="removeAddon('${escHtml(addon.id)}')"><i class="fa-solid fa-trash"></i> Remove Add-on</button>
     </div>
   `;
-  if (addon.id === 'oneblock') loadObjectiveRushState();
+  if (addon.id === 'survival_rush') loadObjectiveRushState();
 }
 
 let objectiveRushPollTimer = null;
 
 async function loadObjectiveRushState() {
-  if (selectedAddonId !== 'oneblock' || !document.getElementById('objective-rush-control')) return;
+  if (selectedAddonId !== 'survival_rush' || !document.getElementById('objective-rush-control')) return;
   try {
-    const res = await fetch(`/api/addons/oneblock/objective-rush/state?_=${Date.now()}`, {cache:'no-store'});
+    const res = await fetch(`/api/addons/survival-rush/objective-rush/state?_=${Date.now()}`, {cache:'no-store'});
     const data = await res.json();
     renderObjectiveRush(data);
   } catch (e) {
     renderObjectiveRush({state:{status:'idle'}, helper:{connected:false,error:e.message}});
   }
   clearTimeout(objectiveRushPollTimer);
-  if (selectedAddonId === 'oneblock' && document.getElementById('panel-addons')?.classList.contains('active')) {
+  if (selectedAddonId === 'survival_rush' && document.getElementById('panel-addons')?.classList.contains('active')) {
     objectiveRushPollTimer = setTimeout(loadObjectiveRushState, 1000);
   }
 }
 
 function objectiveTargetAmount(active) {
   const target = active?.definition?.target || {};
-  return Number(target.amount ?? target.phase_changes ?? 1);
+  return Math.max(1, Number(target.amount || 1));
 }
 
 function renderObjectiveRush(data) {
   const box = document.getElementById('objective-rush-control');
   if (!box) return;
-  const state = data.state || {status:'idle',wins:0,strikes:0,win_target:10};
+  const state = data.state || {status:'idle',wins:0,strikes:0,win_target:20};
   const helper = data.helper || {};
   const objectives = state.active_objectives || (state.active ? [state.active] : []);
-  const running = state.status === 'active';
+  const status = String(state.status || 'idle');
+  const running = status === 'active';
+  const paused = status === 'paused';
+  const isError = status === 'error' || status === 'aborted';
+  const worldMismatch = !!state.world_mismatch;
+  const world = state.world_context || {};
+  const tier = escHtml(state.progression_tier || 'START');
+  const countdown = Number(state.completion_countdown_remaining || 0);
+  const dragonActive = !!(state.dragon_active || (state.active_objectives || []).some(o => o.definition && (o.definition.id === 'dragon_slayer' || o.definition.family === 'dragon')));
   const objectiveRows = objectives.slice(0, 3).map((active, index) => {
     const target = objectiveTargetAmount(active);
     const progress = Math.min(Number(active?.progress || 0), target);
     const pct = target ? Math.min(100, Math.round(progress / target * 100)) : 0;
-    return `<div class="or-objective ${active.resolved ? 'complete' : ''}"><span>OBJECTIVE ${index + 1}${active.resolved ? ' ✓' : ''}</span><h4>${escHtml(active.definition?.name || active.definition?.id || '')}</h4><p>${escHtml(active.definition?.description || '')}</p><div class="or-progress"><div style="width:${pct}%"></div></div><b>${progress} / ${target}</b></div>`;
+    const name = escHtml(active?.definition?.name || active?.definition?.id || '');
+    const desc = escHtml(active?.definition?.description || '');
+    const isDragonRow = !!(active?.definition?.id === 'dragon_slayer' || active?.definition?.family === 'dragon');
+    return `<div class="or-objective ${active?.resolved ? 'complete' : ''} ${isDragonRow ? 'dragon-row' : ''}"><span>OBJECTIVE ${index + 1}${active?.resolved ? ' \u2713' : ''}</span><h4>${name}</h4><p>${desc}</p><div class="or-progress"><div style="width:${pct}%"></div></div><b>${progress} / ${target}</b></div>`;
   }).join('');
+  const worldLine = [
+    world.day ? `Day ${escHtml(String(world.day))}` : '',
+    world.difficulty ? escHtml(world.difficulty) : '',
+    world.dimension ? escHtml(world.dimension) : '',
+    world.biome ? escHtml(world.biome) : '',
+  ].filter(Boolean).join(' \u00b7 ');
+  const diagLines = Array.isArray(state.director_diagnostics) ? state.director_diagnostics : [];
+  const diagHtml = diagLines.length ? `<div class="or-diagnostics"><div class="or-diag-label">Director Diagnostics</div>${diagLines.map(d => `<div class="or-diag-line">${escHtml(typeof d === 'string' ? d : (d.message || JSON.stringify(d)))}</div>`).join('')}</div>` : '';
+  const statusLabel = isError ? 'ERROR' : paused ? 'PAUSED' : running ? 'ACTIVE' : (status === 'won' ? 'WON' : 'IDLE');
   box.innerHTML = `
-    <div class="or-head"><span class="or-status ${running ? 'active' : ''}">${escHtml(state.status || 'idle')} ×${Number(state.objective_count || 1)}</span><span class="or-helper ${helper.connected ? 'ok' : 'off'}"><i class="fa-solid fa-circle"></i> ${helper.connected ? 'Helper online' : 'Helper offline'}</span></div>
+    <div class="or-head"><span class="or-status ${running ? 'active' : paused ? 'paused' : isError ? 'error' : ''}">${escHtml(statusLabel)} \u00d7${Number(state.objective_count || 1)}</span><span class="or-helper ${helper.connected ? 'ok' : 'off'}"><i class="fa-solid fa-circle"></i> ${helper.connected ? 'Helper online' : 'Helper offline'}</span></div>
+    <div class="or-tier-world"><span class="or-tier">${tier}</span>${worldLine ? `<span class="or-world">${worldLine}</span>` : ''}</div>
     <div class="or-score"><strong>${Number(state.wins || 0)}<small>/${Number(state.win_target || 10)} WINS</small></strong><strong>${Number(state.strikes || 0)}<small>/3 STRIKES</small></strong></div>
     <div class="or-actions">${[1,2,3].map(n => `<button class="btn btn-ghost btn-sm ${Number(state.objective_count || 1) === n ? 'active' : ''}" onclick="objectiveRushAction('objective-count',{count:${n}})">${n} Objective${n > 1 ? 's' : ''}</button>`).join('')}</div>
-    ${running && objectives.length ? objectiveRows : `<div class="or-idle">${state.status === 'won' ? 'RUN COMPLETE!' : 'Start a 10-Win Objective Rush run.'}</div>`}
+    ${running && countdown > 0 ? `<div class="or-countdown"><i class="fa-solid fa-stopwatch"></i> ${countdown}s remaining</div>` : ''}
+    ${worldMismatch ? `<div class="or-warn"><i class="fa-solid fa-triangle-exclamation"></i> World mismatch detected \u2014 progress paused until resolved</div>` : ''}
+    ${(running || paused || isError) && objectives.length ? objectiveRows : `<div class="or-idle">${status === 'won' ? 'RUN COMPLETE!' : paused ? 'Run paused. Resume when ready.' : isError ? 'Run encountered an error.' : 'Start a 20-Win Objective Rush run.'}</div>`}
     ${running ? `<small>Count changes apply next set.</small>` : ''}
+    ${dragonActive ? `<div class="or-dragon"><i class="fa-solid fa-dragon"></i> Dragon Slayer is active \u2014 gift objective</div>` : ''}
     ${helper.error && !helper.connected ? `<div class="or-error">${escHtml(helper.error)}</div>` : ''}
+    ${diagHtml}
     <div class="or-actions">
-      ${running ? `<button class="btn btn-danger btn-sm" onclick="objectiveRushAction('fail',{reason:'manual'})">Fail Set</button><button class="btn btn-ghost btn-sm" onclick="objectiveRushAction('reroll',{penalize:false})">Reroll Set</button><button class="btn btn-ghost btn-sm" onclick="objectiveRushAction('surrender',{})">Surrender</button><button class="btn btn-danger btn-sm" onclick="objectiveRushAction('abort',{})">Abort</button>` : `<button class="btn btn-primary" ${helper.connected ? '' : 'disabled'} onclick="objectiveRushAction('start',{win_target:10})"><i class="fa-solid fa-play"></i> Start 10-Win Run</button>`}
+      ${running ? `<button class="btn btn-danger btn-sm" onclick="objectiveRushAction('fail',{reason:'manual'})">Fail Set</button><button class="btn btn-ghost btn-sm" onclick="objectiveRushAction('reroll',{penalize:false})">Reroll Set</button><button class="btn btn-ghost btn-sm" onclick="objectiveRushAction('surrender',{})">Surrender</button><button class="btn btn-danger btn-sm" onclick="objectiveRushAction('abort',{})">Abort</button>` : `<button class="btn btn-primary" ${helper.connected ? '' : 'disabled'} onclick="objectiveRushAction('start',{win_target:20})"><i class="fa-solid fa-play"></i> Start 20-Win Run</button>`}
     </div>`;
 }
 
 async function objectiveRushAction(action, payload) {
   try {
-    const res = await fetch(`/api/addons/oneblock/objective-rush/${action}`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload || {})});
+    const res = await fetch(`/api/addons/survival-rush/objective-rush/${action}`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload || {})});
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Objective Rush action failed');
     renderObjectiveRush(data);
@@ -3346,6 +3692,9 @@ function updateOverlayUrl(type) {
   } else if (type === 'song') {
     const skinSel = document.getElementById('song-skin-select');
     if (skinSel && skinSel.value && skinSel.value !== 'default') params.set('skin', skinSel.value);
+  } else if (type === 'roulette') {
+    // No URL params yet; the overlay URL is static. Kept as a branch so future
+    // options (e.g. accent color) slot in without touching the generic path.
   }
 
   const qs = params.toString();
@@ -3479,6 +3828,69 @@ function adjustCoinGoal() {
 function resetCoinGoal() {
   if (!confirm('Reset current coins to 0? (Goal & label stay.)')) return;
   _postCoinGoal({ reset: true }, 'Jar reset to 0!');
+}
+
+// ===== TOP GIFT LAYOUT CUSTOMIZE MODAL =====
+let topGiftLayoutChoice = 'left';
+
+function openTopGiftLayoutModal() {
+  fetch('/api/stats/topgift/layout', { cache: 'no-store' })
+    .then(r => r.json())
+    .then(d => {
+      topGiftLayoutChoice = (d && d.layout) || 'left';
+      highlightTopGiftLayoutChoice();
+    })
+    .catch(() => {})
+    .finally(() => {
+      const m = document.getElementById('topgift-layout-modal');
+      if (m) m.classList.add('active');
+    });
+}
+
+function closeTopGiftLayoutModal() {
+  const m = document.getElementById('topgift-layout-modal');
+  if (m) m.classList.remove('active');
+}
+
+function selectLayout(choice) {
+  topGiftLayoutChoice = choice;
+  highlightTopGiftLayoutChoice();
+}
+
+function highlightTopGiftLayoutChoice() {
+  const choices = document.querySelectorAll('#topgift-layout-modal label[data-choice]');
+  choices.forEach(el => {
+    if (el.dataset.choice === topGiftLayoutChoice) {
+      el.style.borderColor = '#5865f2';
+      el.style.background = 'rgba(88,101,242,0.12)';
+    } else {
+      el.style.borderColor = 'var(--border-default)';
+      el.style.background = 'transparent';
+    }
+  });
+}
+
+function saveTopGiftLayout() {
+  fetch('/api/topgift/layout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ layout: topGiftLayoutChoice })
+  })
+    .then(r => r.json())
+    .then(res => {
+      if (res.status === 'success') {
+        showCopyToast('Top card layout updated! Gift, Streak & Showcase refresh automatically.');
+        // Refresh all three live previews so Khito sees the switch immediately
+        ['preview-topgift', 'preview-topstreak', 'preview-topshowcase'].forEach(id => {
+          const iframe = document.getElementById(id);
+          if (iframe && iframe.src) iframe.src = iframe.src;
+        });
+        closeTopGiftLayoutModal();
+      } else {
+        showCopyToast(res.message || 'Update failed', true);
+      }
+    })
+    .catch(() => showCopyToast('Update failed', true));
 }
 
 // ===== GIFT GOAL CUSTOMIZE MODAL =====
@@ -3729,15 +4141,51 @@ function resetTopStreakOverlay() {
 }
 
 function resetTopGifter() {
-  if (!confirm('Reset gifter ranking for this stream?')) return;
+  if (!confirm('Reset gifter AND liker rankings for this stream?')) return;
   fetch('/api/stats/topgifter/reset', { method: 'POST' })
     .then(r => r.json())
     .then(res => {
-      showCopyToast(res.status === 'success' ? 'Gifter ranking reset!' : res.message || 'Reset failed');
+      showCopyToast(res.status === 'success' ? 'Gifter & liker rankings reset!' : res.message || 'Reset failed');
       const iframe = document.getElementById('preview-topgifter');
       if (iframe) iframe.src = iframe.src;
     })
     .catch(() => showCopyToast('Reset failed', true));
+}
+
+// Amount-visibility toggles for the Top Gifter & Liker leaderboard overlay.
+// Settings persist to data/overlay_settings.json and the overlay reads them
+// live from the /api/stats/topgifter poll — no bot restart, no OBS-side UI.
+function setupTopGifterToggles() {
+  const coinChk = document.getElementById('topgifter-show-coins');
+  const likeChk = document.getElementById('topgifter-show-likes');
+  if (!coinChk && !likeChk) return;
+
+  // Load current state.
+  fetch('/api/stats/overlay/settings', { cache: 'no-store' })
+    .then(r => r.json())
+    .then(s => {
+      if (coinChk) coinChk.checked = !!s.show_gift_amounts;
+      if (likeChk) likeChk.checked = !!s.show_like_amounts;
+    })
+    .catch(() => {});
+
+  function persist(field, value) {
+    fetch('/api/stats/overlay/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: value })
+    }).catch(() => showCopyToast('Failed to save toggle', true));
+    // Refresh the live preview so the change is visible immediately.
+    const iframe = document.getElementById('preview-topgifter');
+    if (iframe) iframe.src = iframe.src;
+  }
+
+  if (coinChk) {
+    coinChk.addEventListener('change', () => persist('show_gift_amounts', coinChk.checked));
+  }
+  if (likeChk) {
+    likeChk.addEventListener('change', () => persist('show_like_amounts', likeChk.checked));
+  }
 }
 
 // Click-to-select overlay URL input
@@ -3760,7 +4208,8 @@ async function fetchSpotifyStatus() {
     const deviceName = document.getElementById('spotify-device-name');
     const connectBtn = document.getElementById('btn-spotify-connect');
     const disconnectBtn = document.getElementById('btn-spotify-disconnect');
-    const credWarning = document.getElementById('spotify-credential-warning');
+    const activeDeviceNotice = document.getElementById('spotify-active-device-notice');
+
 
     spotifyConnected = data.connected;
     if (data.connected) {
@@ -3769,14 +4218,23 @@ async function fetchSpotifyStatus() {
       deviceName.textContent = data.device ? `Device: ${data.device}` : '';
       connectBtn.style.display = 'none';
       disconnectBtn.style.display = '';
-      credWarning.style.display = 'none';
+      activeDeviceNotice.style.display = 'none';
+
+    } else if (data.authorized && data.needs_active_device) {
+      dot.className = 'status-dot';
+      text.textContent = 'Spotify Connected - Device Inactive';
+      deviceName.textContent = 'Open Spotify and play any song once';
+      connectBtn.style.display = 'none';
+      disconnectBtn.style.display = '';
+      activeDeviceNotice.style.display = '';
     } else {
       dot.className = 'status-dot';
-      text.textContent = data.error || (data.has_credentials ? 'Not Connected' : 'Not Configured');
+      text.textContent = data.error || (data.auth_ready === false ? 'Unavailable' : 'Not Connected');
       deviceName.textContent = data.error ? `⚠ ${data.error}` : '';
       connectBtn.style.display = '';
       disconnectBtn.style.display = 'none';
-      credWarning.style.display = data.has_credentials ? 'none' : '';
+      activeDeviceNotice.style.display = 'none';
+
     }
   } catch(e) {
     console.warn('Spotify status poll failed', e);
@@ -3796,7 +4254,7 @@ async function connectSpotify() {
     // Listen for the postMessage callback
     window.addEventListener('message', function handler(event) {
       if (event.data && event.data.type === 'spotify-connected') {
-        showToast('Connected to Spotify!', 'success');
+        showToast('Spotify connected. Now open Spotify and play any song once so the bot can use song commands.', 'info');
         fetchSpotifyStatus();
         window.removeEventListener('message', handler);
       } else if (event.data && event.data.type === 'spotify-error') {
@@ -3836,9 +4294,6 @@ async function loadSongConfig() {
     document.getElementById('song-allow-explicit').checked = data.allow_explicit !== false;
     document.getElementById('song-max-total').value = data.max_queue_total || 10;
     document.getElementById('song-max-user').value = data.max_queue_per_user || 2;
-    document.getElementById('song-client-id').value = data.spotify_client_id || '';
-    document.getElementById('song-client-secret').value = data.spotify_client_secret && data.spotify_client_secret !== '••••' ? data.spotify_client_secret : '';
-    document.getElementById('song-redirect-uri').value = data.spotify_redirect_uri || 'http://127.0.0.1:5000/api/spotify/callback';
 
     // Play permissions
     const playPerm = data.play_permission || {};
@@ -3881,9 +4336,6 @@ async function saveSongConfig() {
       allow_explicit: document.getElementById('song-allow-explicit').checked,
       max_queue_total: parseInt(document.getElementById('song-max-total').value) || 10,
       max_queue_per_user: parseInt(document.getElementById('song-max-user').value) || 2,
-      spotify_client_id: document.getElementById('song-client-id').value,
-      spotify_client_secret: document.getElementById('song-client-secret').value,
-      spotify_redirect_uri: document.getElementById('song-redirect-uri').value,
       play_permission: {
         everyone: document.getElementById('play-perm-everyone').checked,
         followers: document.getElementById('play-perm-followers').checked,
@@ -3992,29 +4444,63 @@ async function clearSongQueue() {
   }
 }
 
+let songHistoryCache = [];
+let songHistoryFiltersWired = false;
+
+function renderSongHistory() {
+  const container = document.getElementById('song-history-container');
+  const count = document.getElementById('song-history-count');
+  if (!container) return;
+
+  const options = {
+    viewer: document.getElementById('song-history-viewer')?.value || '',
+    date: document.getElementById('song-history-date')?.value || '',
+    sort: document.getElementById('song-history-sort')?.value || 'newest'
+  };
+  const filtered = SongHistoryFilters.filterAndSortSongHistory(songHistoryCache, options);
+  if (count) count.textContent = `${filtered.length} of ${songHistoryCache.length} songs`;
+  if (!filtered.length) {
+    container.innerHTML = `<div class="song-empty small"><span>${songHistoryCache.length ? 'No matching songs.' : 'No history yet.'}</span></div>`;
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  filtered.forEach(entry => {
+    const playedAt = Number(entry.completed_at || entry.requested_at || 0);
+    const playedLabel = playedAt ? new Date(playedAt * 1000).toLocaleString([], {
+      year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+    }) : 'Date unavailable';
+    const div = document.createElement('div');
+    div.className = 'song-row';
+    div.innerHTML = `
+      <div class="song-row-cover" style="width:32px;height:32px;"><i class="fa-solid fa-check"></i></div>
+      <div style="flex:1;min-width:0;">
+        <div class="song-row-title">${esc(entry.track_name)}</div>
+        <div class="song-row-sub">${esc(entry.artist)} · by ${esc(entry.requested_by)}</div>
+        <time class="song-history-time">${esc(playedLabel)}</time>
+      </div>
+    `;
+    fragment.appendChild(div);
+  });
+  container.replaceChildren(fragment);
+}
+
+function wireSongHistoryFilters() {
+  if (songHistoryFiltersWired) return;
+  ['song-history-viewer', 'song-history-date', 'song-history-sort'].forEach(id => {
+    const control = document.getElementById(id);
+    if (control) control.addEventListener(id === 'song-history-viewer' ? 'input' : 'change', renderSongHistory);
+  });
+  songHistoryFiltersWired = true;
+}
+
 async function fetchSongHistory() {
   try {
     const res = await fetch('/api/spotify/history');
     const history = await res.json();
-    const container = document.getElementById('song-history-container');
-    if (!container) return;
-    if (!history || history.length === 0) {
-      container.innerHTML = '<div class="song-empty small"><span>No history yet.</span></div>';
-      return;
-    }
-    container.innerHTML = '';
-    history.slice(0, 20).forEach(entry => {
-      const div = document.createElement('div');
-      div.className = 'song-row';
-      div.innerHTML = `
-        <div class="song-row-cover" style="width:32px;height:32px;"><i class="fa-solid fa-check"></i></div>
-        <div style="flex:1;min-width:0;">
-          <div class="song-row-title">${esc(entry.track_name)}</div>
-          <div class="song-row-sub">${esc(entry.artist)} · by ${esc(entry.requested_by)}</div>
-        </div>
-      `;
-      container.appendChild(div);
-    });
+    songHistoryCache = Array.isArray(history) ? history : [];
+    wireSongHistoryFilters();
+    renderSongHistory();
   } catch(e) {}
 }
 
@@ -4366,3 +4852,485 @@ async function simPull() {
     _simStatus('Error: ' + e.message, 'error');
   }
 }
+
+// ==========================================
+// VIEWER POINTS TAB (SQLite-backed long-term DB)
+// ==========================================
+let pointsOffset = 0;
+const POINTS_PAGE_SIZE = 50;
+let pointsTimer = null;
+
+function _pointsTimeAgo(ts) {
+  if (!ts) return '—';
+  const diff = Math.max(0, Date.now() / 1000 - ts);
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  if (diff < 86400 * 30) return Math.floor(diff / 86400) + 'd ago';
+  const d = new Date(ts * 1000);
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+async function loadPoints() {
+  const q = (document.getElementById('points-search')?.value || '').trim();
+  const sort = document.getElementById('points-sort')?.value || 'coins';
+  const period = document.getElementById('points-period')?.value || 'all';
+  const start = document.getElementById('points-start-date')?.value || '';
+  const end = document.getElementById('points-end-date')?.value || '';
+  const bounds = getPointsPeriodBounds(period, start, end);
+  if (bounds.error) {
+    showToast(bounds.error, 'error');
+    return;
+  }
+  try {
+    const params = new URLSearchParams({ limit: POINTS_PAGE_SIZE, offset: pointsOffset, sort, q });
+    if (bounds.since !== null) params.set('since', bounds.since);
+    if (bounds.until !== null) params.set('until', bounds.until);
+    const res = await fetch('/api/points/viewers?' + params, { cache: 'no-store' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load points');
+    document.getElementById('points-period-label').textContent = bounds.label;
+    renderPoints(data);
+  } catch (e) {
+    console.error('points load failed', e);
+    showToast(e.message || 'Failed to load points', 'error');
+  }
+}
+
+function renderPoints(data) {
+  const tbody = document.getElementById('points-tbody');
+  const empty = document.getElementById('points-empty');
+  const viewers = data.viewers || [];
+
+  document.getElementById('points-total-viewers').textContent = (data.total_viewers ?? data.total ?? 0).toLocaleString();
+  document.getElementById('points-total-coins').textContent = (data.total_coins ?? 0).toLocaleString();
+  document.getElementById('points-total-gifts').textContent = (data.total_gifts ?? 0).toLocaleString();
+
+  if (!viewers.length) {
+    tbody.innerHTML = '';
+    empty.style.display = '';
+  } else {
+    empty.style.display = 'none';
+    tbody.innerHTML = viewers.map((v, i) => {
+      const rank = pointsOffset + i + 1;
+      const nick = v.nickname || v.username || 'Anonymous';
+      const uname = v.username ? '@' + v.username : '';
+      const avatar = v.avatar_url
+        ? `<img class="points-avatar" src="${escHtml(v.avatar_url)}" loading="lazy" onerror="this.outerHTML='<span class=points-avatar-fallback>${escHtml((nick[0] || '?').toUpperCase())}</span>'">`
+        : `<span class="points-avatar-fallback">${escHtml((nick[0] || '?').toUpperCase())}</span>`;
+      return `<tr class="points-row" data-user-id="${escHtml(v.user_id)}" tabindex="0" role="button" title="Click to view / adjust coins">
+        <td class="col-avatar">${rank}</td>
+        <td><div class="points-viewer-cell">${avatar}<div style="min-width:0;"><div class="points-nick" title="${escHtml(nick)}">${escHtml(nick)}</div></div></div></td>
+        <td class="points-username" title="${escHtml(uname)}">${escHtml(uname)}</td>
+        <td class="col-num coins-cell">${(v.total_coins || 0).toLocaleString()}</td>
+        <td class="col-num">${(v.gift_count || 0).toLocaleString()}</td>
+        <td class="col-activity">${_pointsTimeAgo(v.last_gift_ts)}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  const total = data.total || 0;
+  const pages = Math.max(1, Math.ceil(total / POINTS_PAGE_SIZE));
+  const page = Math.floor(pointsOffset / POINTS_PAGE_SIZE) + 1;
+  document.getElementById('points-page-info').textContent = total ? `Page ${page} / ${pages}` : '—';
+  document.getElementById('points-prev').disabled = pointsOffset <= 0;
+  document.getElementById('points-next').disabled = pointsOffset + POINTS_PAGE_SIZE >= total;
+}
+
+function _bindPointsControls() {
+  const search = document.getElementById('points-search');
+  const sort = document.getElementById('points-sort');
+  const period = document.getElementById('points-period');
+  const customRange = document.getElementById('points-custom-range');
+  const start = document.getElementById('points-start-date');
+  const end = document.getElementById('points-end-date');
+  if (!search || search.dataset.bound) return;
+  search.dataset.bound = '1';
+  let debounce = null;
+  search.addEventListener('input', () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => { pointsOffset = 0; loadPoints(); }, 250);
+  });
+  sort.addEventListener('change', () => { pointsOffset = 0; loadPoints(); });
+  period.addEventListener('change', () => {
+    const custom = period.value === 'custom';
+    customRange.hidden = !custom;
+    if (custom) {
+      const today = new Date();
+      const localToday = new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+      if (!end.value) end.value = localToday;
+      if (!start.value) {
+        const weekAgo = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6);
+        start.value = new Date(weekAgo.getTime() - weekAgo.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+      }
+      return;
+    }
+    pointsOffset = 0;
+    loadPoints();
+  });
+  document.getElementById('points-apply-period').addEventListener('click', () => {
+    pointsOffset = 0;
+    loadPoints();
+  });
+  document.getElementById('points-prev').addEventListener('click', () => {
+    pointsOffset = Math.max(0, pointsOffset - POINTS_PAGE_SIZE);
+    loadPoints();
+  });
+  document.getElementById('points-next').addEventListener('click', () => {
+    pointsOffset += POINTS_PAGE_SIZE;
+    loadPoints();
+  });
+
+  // Row click / keyboard opens the per-viewer coin editor. Delegated so it
+  // survives every table re-render from polling.
+  const tbody = document.getElementById('points-tbody');
+  if (tbody) {
+    tbody.addEventListener('click', (e) => {
+      const row = e.target.closest('tr.points-row');
+      if (row && row.dataset.userId) openPointsViewerModal(row.dataset.userId);
+    });
+    tbody.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const row = e.target.closest('tr.points-row');
+      if (!row || !row.dataset.userId) return;
+      e.preventDefault();
+      openPointsViewerModal(row.dataset.userId);
+    });
+  }
+
+  const amount = document.getElementById('pv-adjust-amount');
+  if (amount) {
+    amount.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); adjustViewerCoins('add'); }
+    });
+  }
+}
+
+// ===== PER-VIEWER COIN EDITOR MODAL =====
+// Manual recovery path: gifts can be lost when the app crashes or the TikTok
+// connection drops, so the operator can set/add/remove a viewer's coins.
+let pointsViewerId = null;
+
+function _pvDate(ts) {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function _pvDateTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+  });
+}
+
+async function openPointsViewerModal(userId) {
+  pointsViewerId = String(userId);
+  const modal = document.getElementById('points-viewer-modal');
+  document.getElementById('pv-adjust-amount').value = '';
+  document.getElementById('pv-adjust-note').value = '';
+  document.getElementById('pv-history').innerHTML = '<div class="pv-history-empty">Loading…</div>';
+  if (modal) modal.classList.add('active');
+  try {
+    const res = await fetch('/api/points/viewer?id=' + encodeURIComponent(pointsViewerId), { cache: 'no-store' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load viewer');
+    renderPointsViewer(data);
+  } catch (e) {
+    document.getElementById('pv-history').innerHTML =
+      `<div class="pv-history-empty">${escHtml(e.message || 'Failed to load viewer')}</div>`;
+    showToast(e.message || 'Failed to load viewer', 'error');
+  }
+}
+
+function closePointsViewerModal() {
+  const modal = document.getElementById('points-viewer-modal');
+  if (modal) modal.classList.remove('active');
+  pointsViewerId = null;
+}
+
+function renderPointsViewer(data) {
+  const v = data.viewer || {};
+  const nick = v.nickname || v.username || 'Anonymous';
+  const initial = escHtml((nick[0] || '?').toUpperCase());
+  document.getElementById('pv-avatar').innerHTML = v.avatar_url
+    ? `<img class="points-avatar" src="${escHtml(v.avatar_url)}" loading="lazy" onerror="this.outerHTML='<span class=points-avatar-fallback>${initial}</span>'">`
+    : `<span class="points-avatar-fallback">${initial}</span>`;
+  document.getElementById('pv-nick').textContent = nick;
+  document.getElementById('pv-username').textContent = v.username ? '@' + v.username : '';
+  document.getElementById('pv-userid').textContent = v.user_id ? 'ID ' + v.user_id : '';
+  document.getElementById('pv-coins').textContent = (v.total_coins || 0).toLocaleString();
+  document.getElementById('pv-gifts').textContent = (v.gift_count || 0).toLocaleString();
+  document.getElementById('pv-first-seen').textContent = _pvDate(v.first_seen);
+  document.getElementById('pv-last-gift').textContent = _pointsTimeAgo(v.last_gift_ts);
+
+  const history = data.history || [];
+  const box = document.getElementById('pv-history');
+  if (!history.length) {
+    box.innerHTML = '<div class="pv-history-empty">No gift history recorded.</div>';
+    return;
+  }
+  box.innerHTML = history.map(h => {
+    const manual = h.kind === 'manual';
+    const coins = Number(h.coins || 0);
+    const sign = coins > 0 ? '+' : '';
+    return `<div class="pv-history-row${manual ? ' is-manual' : ''}">
+      <span class="pv-history-icon"><i class="fa-solid ${manual ? 'fa-pen' : 'fa-gift'}"></i></span>
+      <span class="pv-history-name" title="${escHtml(h.gift_name || '')}">${escHtml(h.gift_name || (manual ? 'Manual adjustment' : 'Gift'))}</span>
+      <span class="pv-history-coins${coins < 0 ? ' is-negative' : ''}">${sign}${coins.toLocaleString()}</span>
+      <span class="pv-history-time">${_pvDateTime(h.ts)}</span>
+    </div>`;
+  }).join('');
+}
+
+async function adjustViewerCoins(operation) {
+  if (!pointsViewerId) return;
+  const amountEl = document.getElementById('pv-adjust-amount');
+  const raw = (amountEl.value || '').trim();
+  if (raw === '') { showToast('Enter a coin amount', 'error'); return; }
+  const amount = Number(raw);
+  if (!Number.isFinite(amount) || amount < 0 || !Number.isInteger(amount)) {
+    showToast('Coins must be a whole number of 0 or more', 'error');
+    return;
+  }
+  try {
+    const res = await fetch('/api/points/viewer/adjust', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: pointsViewerId,
+        operation,
+        amount,
+        note: (document.getElementById('pv-adjust-note').value || '').trim()
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Adjustment failed');
+    renderPointsViewer(data);
+    amountEl.value = '';
+    document.getElementById('pv-adjust-note').value = '';
+    const delta = Number(data.applied_delta || 0);
+    showToast(
+      delta === 0
+        ? 'Already at that total — nothing changed'
+        : `${delta > 0 ? 'Added' : 'Removed'} ${Math.abs(delta).toLocaleString()} coins — now ${(data.total_coins || 0).toLocaleString()}`,
+      'success'
+    );
+    loadPoints();
+  } catch (e) {
+    showToast(e.message || 'Adjustment failed', 'error');
+  }
+}
+
+// Refresh "last activity" + totals while the panel is visible.
+setInterval(() => {
+  const panel = document.getElementById('panel-points');
+  if (panel && panel.classList.contains('active')) loadPoints();
+}, 15000);
+
+document.addEventListener('DOMContentLoaded', _bindPointsControls);
+
+// ==========================================
+// GIFT ROULETTE PANEL
+// ==========================================
+let rouletteConfig = null;
+let roulettePool = [];          // array of gift_id strings, ordered
+let rouletteConfiguredGifts = []; // resolved entries from /api/roulette/config
+
+function rouletteDisplayName(giftId) {
+  const entry = rouletteConfiguredGifts.find(e => e.gift_id === giftId);
+  if (entry) return entry.label;
+  return getGiftDisplayName(giftId);
+}
+
+function rouletteIcon(giftId) {
+  const entry = rouletteConfiguredGifts.find(e => e.gift_id === giftId);
+  return (entry && entry.icon_url) || giftIconMap[giftId] || '';
+}
+
+function renderRoulettePool() {
+  const list = document.getElementById('roulette-pool-list');
+  if (!list) return;
+  list.innerHTML = '';
+  roulettePool.forEach((giftId, idx) => {
+    const row = document.createElement('div');
+    row.className = 'roulette-pool-row';
+    const icon = rouletteIcon(giftId);
+    const img = document.createElement('img');
+    if (icon) { img.src = icon; img.alt = ''; } else { img.style.visibility = 'hidden'; }
+    const name = document.createElement('span');
+    name.className = 'roulette-pool-name';
+    name.textContent = rouletteDisplayName(giftId);
+    const id = document.createElement('span');
+    id.className = 'roulette-pool-id';
+    id.textContent = '#' + giftId;
+    const up = document.createElement('button');
+    up.className = 'btn btn-ghost btn-sm'; up.innerHTML = '<i class="fa-solid fa-arrow-up"></i>';
+    up.disabled = idx === 0;
+    up.onclick = () => { [roulettePool[idx-1], roulettePool[idx]] = [roulettePool[idx], roulettePool[idx-1]]; renderRoulettePool(); };
+    const down = document.createElement('button');
+    down.className = 'btn btn-ghost btn-sm'; down.innerHTML = '<i class="fa-solid fa-arrow-down"></i>';
+    down.disabled = idx === roulettePool.length - 1;
+    down.onclick = () => { [roulettePool[idx+1], roulettePool[idx]] = [roulettePool[idx], roulettePool[idx+1]]; renderRoulettePool(); };
+    const rm = document.createElement('button');
+    rm.className = 'btn btn-danger btn-sm'; rm.innerHTML = '&times;';
+    rm.onclick = () => { roulettePool.splice(idx, 1); renderRoulettePool(); };
+    row.appendChild(img); row.appendChild(name); row.appendChild(id);
+    const btns = document.createElement('span');
+    btns.className = 'roulette-pool-btns';
+    btns.appendChild(up); btns.appendChild(down); btns.appendChild(rm);
+    row.appendChild(btns);
+    list.appendChild(row);
+  });
+  const count = document.getElementById('roulette-pool-count');
+  if (count) count.textContent = roulettePool.length + ' events';
+}
+
+function renderRouletteTrigger() {
+  const picker = document.getElementById('roulette-trigger-picker');
+  if (!picker) return;
+  picker.innerHTML = '';
+  const cfg = rouletteConfig || {};
+  const cur = document.createElement('div');
+  cur.className = 'roulette-trigger-current';
+  const icon = document.createElement('img');
+  const triggerId = cfg.trigger_gift_id || '';
+  const tIcon = rouletteIcon(triggerId);
+  if (tIcon) { icon.src = tIcon; icon.alt = ''; } else { icon.style.visibility = 'hidden'; }
+  const name = document.createElement('span');
+  name.textContent = triggerId ? rouletteDisplayName(triggerId) : 'Not configured';
+  const id = document.createElement('span');
+  id.className = 'roulette-pool-id';
+  id.textContent = triggerId ? ('#' + triggerId) : '';
+  cur.appendChild(icon); cur.appendChild(name); cur.appendChild(id);
+  picker.appendChild(cur);
+}
+
+function fillRouletteAddSelect() {
+  const sel = document.getElementById('roulette-add-select');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Add configured gift…</option>';
+  // All configured gifts (currentConfig.Gifts) except GlobalActions/empties.
+  const gifts = (currentConfig && currentConfig.Gifts) || {};
+  Object.keys(gifts).forEach(gid => {
+    if (gid === 'GlobalActions') return;
+    const actions = gifts[gid];
+    if (!Array.isArray(actions) || actions.length === 0) return;
+    if (roulettePool.includes(gid)) return;
+    const opt = document.createElement('option');
+    opt.value = gid;
+    opt.textContent = `${rouletteDisplayName(gid)} (#${gid})`;
+    sel.appendChild(opt);
+  });
+  sel.value = current;
+  if (!sel.value) sel.value = '';
+}
+
+async function initRoulettePanel() {
+  try {
+    const res = await fetch('/api/roulette/config', { cache: 'no-store' });
+    const body = await res.json();
+    rouletteConfig = body.roulette || null;
+    rouletteConfiguredGifts = body.resolved_entries || [];
+    if (rouletteConfig) {
+      roulettePool = [...(rouletteConfig.pool || [])];
+      const en = document.getElementById('roulette-enabled');
+      if (en) en.checked = !!rouletteConfig.enabled;
+      const spin = document.getElementById('roulette-spin-ms');
+      const hold = document.getElementById('roulette-hold-ms');
+      const cd = document.getElementById('roulette-cooldown-ms');
+      if (spin) spin.value = Math.round((rouletteConfig.spin_ms || 5000) / 1000);
+      if (hold) hold.value = Math.round((rouletteConfig.hold_ms || 4000) / 1000);
+      if (cd) cd.value = Math.round((rouletteConfig.cooldown_ms || 2000) / 1000);
+    }
+    renderRouletteTrigger();
+    renderRoulettePool();
+    fillRouletteAddSelect();
+    renderRouletteWarnings(body.warnings || []);
+  } catch (e) {
+    showToast('Failed to load Roulette config', 'error');
+  }
+}
+
+function renderRouletteWarnings(warnings) {
+  const box = document.getElementById('roulette-warnings');
+  if (!box) return;
+  box.innerHTML = '';
+  (warnings || []).forEach(w => {
+    const div = document.createElement('div');
+    div.className = 'roulette-warning';
+    div.textContent = w;
+    box.appendChild(div);
+  });
+}
+
+async function saveRouletteConfig() {
+  const en = document.getElementById('roulette-enabled');
+  const spin = document.getElementById('roulette-spin-ms');
+  const hold = document.getElementById('roulette-hold-ms');
+  const cd = document.getElementById('roulette-cooldown-ms');
+  const payload = {
+    enabled: !!(en && en.checked),
+    trigger_gift_id: (rouletteConfig && rouletteConfig.trigger_gift_id) || '',
+    spin_ms: Math.round(parseFloat(spin ? spin.value : '5') * 1000),
+    hold_ms: Math.round(parseFloat(hold ? hold.value : '4') * 1000),
+    cooldown_ms: Math.round(parseFloat(cd ? cd.value : '2') * 1000),
+    pool: [...roulettePool],
+  };
+  try {
+    const res = await fetch('/api/roulette/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = await res.json();
+    if (!res.ok) { showToast(body.message || 'Save failed', 'error'); return; }
+    if (body.roulette) {
+      rouletteConfig = body.roulette;
+      roulettePool = [...(body.roulette.pool || [])];
+      renderRoulettePool();
+    }
+    showToast('Roulette saved — applies live', 'success');
+    initRoulettePanel();
+  } catch (e) {
+    showToast('Save failed', 'error');
+  }
+}
+
+async function testRouletteSpin() {
+  const status = document.getElementById('roulette-status');
+  try {
+    const res = await fetch('/api/roulette/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: 'TestViewer' }),
+    });
+    const body = await res.json();
+    if (status) {
+      status.textContent = res.ok
+        ? `Test spin accepted — winner will be "${body.winner}" (lands in ~${Math.max(0, Math.round((body.lands_at - Date.now()/1000)))}s). Watch /overlay/roulette.`
+        : (body.message || 'Test spin failed');
+    }
+    if (!res.ok) showToast(body.message || 'Test spin failed', 'error');
+    else showToast('Test spin started: ' + body.winner, 'success');
+  } catch (e) {
+    showToast('Test spin failed', 'error');
+  }
+}
+
+// Bind roulette controls once DOM is ready.
+document.addEventListener('DOMContentLoaded', () => {
+  const save = document.getElementById('btn-roulette-save');
+  const test = document.getElementById('btn-roulette-test');
+  const add = document.getElementById('btn-roulette-add');
+  if (save) save.onclick = saveRouletteConfig;
+  if (test) test.onclick = testRouletteSpin;
+  if (add) add.onclick = () => {
+    const sel = document.getElementById('roulette-add-select');
+    if (sel && sel.value && !roulettePool.includes(sel.value)) {
+      roulettePool.push(sel.value);
+      renderRoulettePool();
+      fillRouletteAddSelect();
+    }
+  };
+});

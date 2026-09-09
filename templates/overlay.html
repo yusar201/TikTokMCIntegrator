@@ -783,6 +783,10 @@ html, body {
   overflow: hidden !important;
   text-overflow: ellipsis !important;
 }
+/* Keep the coin total visible; shrink/ellipsis the gift name first. */
+.tg-card .tg-gift-row { min-width: 0 !important; max-width: 185px !important; }
+.tg-card .tg-gift-name { min-width: 0 !important; flex: 1 1 auto !important; }
+.tg-card .tg-coins { flex: 0 0 auto !important; white-space: nowrap !important; }
 
 /* --- Top Streak card as MC toast --- */
 .ts-card {
@@ -955,6 +959,110 @@ html, body {
 }
 /* ===== END MINECRAFT ACHIEVEMENT-TOAST REDESIGN ===== */
 
+/* ===== TOP GIFT LAYOUT VARIANTS (2026-08-19, additive — begin) =====
+   Switchable from the dashboard "Customize" button (Top Gift / Top Showcase).
+   body[data-tglayout] is set by JS from /api/stats/gifts?summary=… payloads.
+   left   = icon left, name right (matches the pre-existing default exactly)
+   center = icon centered, name below the icon
+   right  = icon right, name left */
+body[data-tglayout="left"] .tg-card {
+  flex-direction: row !important;
+  align-items: center !important;
+  text-align: left !important;
+}
+body[data-tglayout="left"] .tg-card .tg-info {
+  align-items: flex-start !important;
+  text-align: left !important;
+}
+body[data-tglayout="left"] .tg-card.tg-has-anim .tg-icon-wrap {
+  left: 0 !important; right: auto !important;
+}
+body[data-tglayout="left"] .tg-card.tg-has-anim {
+  padding: 8px 12px 8px 136px !important;
+}
+
+body[data-tglayout="center"] .tg-card {
+  flex-direction: column !important;
+  align-items: center !important;
+  text-align: center !important;
+  gap: 8px !important;
+}
+body[data-tglayout="center"] .tg-card .tg-info {
+  align-items: center !important;
+  text-align: center !important;
+}
+body[data-tglayout="center"] .tg-card .tg-gift-row { justify-content: center !important; }
+body[data-tglayout="center"] .tg-card.tg-has-anim {
+  padding: 12px 16px !important;
+  min-height: 0 !important;
+  gap: 8px !important;
+}
+body[data-tglayout="center"] .tg-card.tg-has-anim .tg-icon-wrap {
+  position: relative !important;
+  left: auto !important; right: auto !important; top: auto !important; bottom: auto !important;
+  width: auto !important; height: auto !important;
+  align-self: center !important;
+}
+
+body[data-tglayout="right"] .tg-card {
+  flex-direction: row-reverse !important;
+  align-items: center !important;
+  text-align: right !important;
+}
+body[data-tglayout="right"] .tg-card .tg-info {
+  align-items: flex-end !important;
+  text-align: right !important;
+}
+body[data-tglayout="right"] .tg-card .tg-gift-row { justify-content: flex-end !important; }
+body[data-tglayout="right"] .tg-card.tg-has-anim {
+  padding: 8px 136px 8px 12px !important;
+}
+body[data-tglayout="right"] .tg-card.tg-has-anim .tg-icon-wrap {
+  left: auto !important; right: 0 !important;
+}
+/* ===== TOP GIFT LAYOUT VARIANTS (end) ===== */
+
+/* ===== TOP STREAK LAYOUT VARIANTS (2026-08-21, additive — begin) =====
+   Same three choices as Top Gift, driven by body[data-tslayout] set from
+   /api/stats/gifts?summary=topstreak payloads. The streak card has no
+   animated-video mode, so these are simple flex-direction switches.
+   left = icon left / text right (default), center = stacked,
+   right = icon right / text left. */
+body[data-tslayout="left"] .ts-card {
+  flex-direction: row !important;
+  align-items: center !important;
+  text-align: left !important;
+}
+body[data-tslayout="left"] .ts-card .ts-info {
+  align-items: flex-start !important;
+  text-align: left !important;
+}
+body[data-tslayout="left"] .ts-card .ts-gift-row { justify-content: flex-start !important; }
+
+body[data-tslayout="center"] .ts-card {
+  flex-direction: column !important;
+  align-items: center !important;
+  text-align: center !important;
+  gap: 8px !important;
+}
+body[data-tslayout="center"] .ts-card .ts-info {
+  align-items: center !important;
+  text-align: center !important;
+}
+body[data-tslayout="center"] .ts-card .ts-gift-row { justify-content: center !important; }
+
+body[data-tslayout="right"] .ts-card {
+  flex-direction: row-reverse !important;
+  align-items: center !important;
+  text-align: right !important;
+}
+body[data-tslayout="right"] .ts-card .ts-info {
+  align-items: flex-end !important;
+  text-align: right !important;
+}
+body[data-tslayout="right"] .ts-card .ts-gift-row { justify-content: flex-end !important; }
+/* ===== TOP STREAK LAYOUT VARIANTS (end) ===== */
+
 /* ===== COIN GOAL JAR OVERLAY ===== */
 .cg-wrap {
   position: fixed;
@@ -1087,185 +1195,107 @@ html, body {
   --goldblock-base: #fcee4d; --goldblock-grid: #b88115; --goldblock-light: #fde756; --goldblock-border: #8a6510;
 }
 
-.podium-wrap {
-  position: fixed; bottom: 30px; left: 50%;
+/* ===== TOP GIFT/LIKE LEADERBOARD (rotating list) ===== */
+.lb-wrap {
+  position: fixed; bottom: 20px; left: 50%;
   transform: translateX(-50%);
-  pointer-events: none; z-index: 10;
+  width: 380px; pointer-events: none; z-index: 10;
   opacity: 0; transition: opacity 0.5s ease;
-  display: flex; flex-direction: column;
-  align-items: center; gap: 14px;
+  display: flex; flex-direction: column; gap: 6px;
+  font-family: var(--font-pixel);
 }
-.podium-wrap.visible { opacity: 1; }
+.lb-wrap.visible { opacity: 1; }
+.lb-wrap.preview-mode {
+  bottom: auto; top: 12px;
+}
 
-/* ===== BANNER ===== */
-.podium-banner {
-  background: #f3cca1;
-  border: 4px solid var(--border-dark);
-  padding: 10px 28px;
-  transform: skew(-2deg);
-  box-shadow: 0 6px 0 rgba(0,0,0,0.3);
-  position: relative;
-}
-.podium-banner::before,
-.podium-banner::after {
-  content: ''; position: absolute; top: 50%; z-index: -1;
-  width: 16px; height: 80%;
-  background: #dca373;
+/* Mode tab: pill that slides between the two labels */
+.lb-header {
+  align-self: center;
+  display: flex; gap: 0; padding: 4px;
+  background: rgba(26,14,6,0.92);
   border: 3px solid var(--border-dark);
+  box-shadow: 0 4px 0 rgba(0,0,0,0.35);
 }
-.podium-banner::before { left: -20px; transform: translateY(-50%) skewY(10deg); }
-.podium-banner::after  { right: -20px; transform: translateY(-50%) skewY(-10deg); }
-.podium-banner-text {
-  font-family: var(--font-pixel); font-size: 14px;
-  color: #b52a1c; letter-spacing: 1px; margin: 0;
-  text-shadow:
-     1px  1px 0 #fff, -1px -1px 0 #fff,
-     1px -1px 0 #fff, -1px  1px 0 #fff,
-     2px  2px 0 #5c1109;
+.lb-tab {
+  padding: 6px 16px; font-size: 11px; color: #9a7b5f;
+  border: 2px solid transparent; transition: all 0.25s ease;
+  white-space: nowrap;
 }
-
-/* ===== PODIUM STAGE ===== */
-.podium-stage {
-  display: flex; align-items: flex-end;
-  justify-content: center; gap: 12px;
-}
-.column-wrapper {
-  display: flex; flex-direction: column;
-  align-items: center; position: relative;
-  animation: podiumSlide 0.6s cubic-bezier(0.34,1.56,0.64,1) both;
-}
-.column-wrapper:nth-child(1) { animation-delay: 0.08s; }
-.column-wrapper:nth-child(2) { animation-delay: 0s; }
-.column-wrapper:nth-child(3) { animation-delay: 0.16s; }
-@keyframes podiumSlide {
-  from { opacity: 0; transform: translateY(30px); }
-  to { opacity: 1; transform: translateY(0); }
+.lb-tab.active {
+  background: var(--goldblock-base); color: #5c3a00;
+  border-color: var(--goldblock-border);
+  text-shadow: 1px 1px 0 rgba(255,255,255,0.35);
 }
 
-/* ===== CROWN (pixel-art SVG) ===== */
-.crown-container {
-  margin-bottom: 8px;
-  filter: drop-shadow(3px 3px 0 rgba(0,0,0,0.4));
-  animation: crownBob 2s ease-in-out infinite;
+/* Board + rows */
+.lb-list {
+  display: flex; flex-direction: column; gap: 4px;
 }
-@keyframes crownBob {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-5px); }
+.lb-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px 6px 8px;
+  background: rgba(26,14,6,0.88);
+  border: 2px solid var(--border-dark);
+  border-left: 6px solid #6d3b19;
 }
+/* Entrance slide only for genuinely NEW rows (added by lbRender); score-only
+   updates patch rows in place so the list never flickers/re-animates. */
+.lb-row.lb-new { animation: lbRowIn 0.4s ease both; }
+@keyframes lbRowIn {
+  from { opacity: 0; transform: translateX(-14px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.lb-row:nth-child(1)  { border-left-color: var(--goldblock-base); background: rgba(60,40,6,0.92); }
+.lb-row:nth-child(2)  { border-left-color: var(--diamond-light); }
+.lb-row:nth-child(3)  { border-left-color: var(--goldblock-grid); }
 
-/* ===== AVATAR FRAMES ===== */
-.avatar-frame {
-  width: 80px; height: 80px;
+.lb-rank {
+  width: 26px; font-size: 12px; color: #f3cca1;
+  text-align: center; flex-shrink: 0;
+  text-shadow: 1px 1px 0 #000;
+}
+.lb-row:nth-child(1) .lb-rank { color: var(--goldblock-base); }
+.lb-row:nth-child(2) .lb-rank { color: var(--diamond-light); }
+.lb-row:nth-child(3) .lb-rank { color: #dcae6b; }
+
+.lb-avatar {
+  width: 38px; height: 38px; flex-shrink: 0;
+  border: 3px solid var(--border-dark);
   overflow: hidden; background: #111;
-  box-sizing: border-box;
-  box-shadow: 0 6px 0 rgba(0,0,0,0.4);
+  box-shadow: 0 3px 0 rgba(0,0,0,0.35);
 }
-.avatar-frame.rank-2, .avatar-frame.rank-3 {
-  width: 72px; height: 72px;
-}
-.avatar-frame img {
-  width: 100%; height: 100%;
-  object-fit: cover; image-rendering: pixelated;
-}
-.avatar-fallback {
+.lb-row:nth-child(1) .lb-avatar { border-color: var(--goldblock-border); }
+.lb-row:nth-child(2) .lb-avatar { border-color: var(--diamond-border); }
+.lb-avatar img { width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; }
+.lb-avatar-fb {
   width: 100%; height: 100%;
   display: flex; align-items: center; justify-content: center;
-  font-size: 36px; font-weight: 700;
-  color: #f3cca1; font-family: var(--font-pixel);
-  background: #1a0e06;
+  font-size: 15px; color: #f3cca1; background: #1a0e06;
+}
+.lb-crown {
+  position: absolute; top: -13px; left: 50%;
+  transform: translateX(-50%);
+  filter: drop-shadow(2px 2px 0 rgba(0,0,0,0.45));
+  animation: crownBob 2s ease-in-out infinite;
+  z-index: 2;
+}
+
+.lb-name {
+  flex: 1; min-width: 0; font-size: 10px; color: #ff9ecb;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   text-shadow: 2px 2px 0 #000;
 }
-.frame-1st { border: 6px solid var(--netherite-border); outline: 4px solid var(--netherite-light); }
-.frame-2nd { border: 6px solid var(--diamond-border);   outline: 4px solid var(--diamond-light); }
-.frame-3rd { border: 6px solid var(--goldblock-border); outline: 4px solid var(--goldblock-light); }
+.lb-row:nth-child(1) .lb-name { color: #ffd76a; }
 
-/* ===== USERNAME ===== */
-.podium-username {
-  font-family: var(--font-pixel); font-size: 10px;
-  color: #fff; margin: 8px 0 4px;
-  max-width: 140px;
-  white-space: nowrap; overflow: hidden;
-  text-overflow: ellipsis; text-align: center;
-  text-shadow: 2px 2px 0 #000, -1px -1px 0 #000;
+.lb-score {
+  display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+  font-size: 11px; color: #fff; text-shadow: 2px 2px 0 #000;
 }
-
-/* ===== SCORE BADGE ===== */
-.score-badge {
-  display: flex; align-items: center; gap: 4px;
-  background: rgba(0,0,0,0.65);
-  padding: 5px 10px; margin-bottom: 8px;
-  border: 2px solid var(--border-dark);
-  font-family: var(--font-pixel); font-size: 9px;
-  color: #ffeb54;
-}
-.score-star { color: #ffca00; font-size: 10px; text-shadow: 1px 1px 0 #000; }
-
-/* ===== PODIUM BLOCKS ===== */
-.podium-block {
-  border: 3px solid var(--border-dark);
-  width: 120px; position: relative;
-  display: flex; flex-direction: column;
-  justify-content: flex-start; align-items: center;
-  padding-top: 14px; box-sizing: border-box;
-}
-/* 1st — Netherite Block */
-.podium-1st {
-  height: 140px;
-  background-color: var(--netherite-base);
-  background-image:
-    repeating-linear-gradient(90deg, var(--netherite-grid) 0px, var(--netherite-grid) 2px, transparent 2px, transparent 30px),
-    repeating-linear-gradient(0deg,  var(--netherite-grid) 0px, var(--netherite-grid) 2px, transparent 2px, transparent 30px),
-    repeating-linear-gradient(45deg, #3d434a 0px, #3d434a 4px, #4a5058 4px, #4a5058 8px);
-  box-shadow: inset 0 6px 0 var(--netherite-light), inset 0 -4px 0 var(--netherite-grid), 0 8px 0 rgba(0,0,0,0.4);
-  border: 3px solid var(--netherite-border);
-  image-rendering: pixelated;
-}
-/* 2nd — Diamond Block */
-.podium-2nd {
-  height: 100px;
-  background-color: var(--diamond-base);
-  background-image:
-    repeating-linear-gradient(90deg, var(--diamond-grid) 0px, var(--diamond-grid) 2px, transparent 2px, transparent 30px),
-    repeating-linear-gradient(0deg,  var(--diamond-grid) 0px, var(--diamond-grid) 2px, transparent 2px, transparent 30px),
-    repeating-linear-gradient(45deg, #4bbcc4 0px, #4bbcc4 4px, #6edde1 4px, #6edde1 8px);
-  box-shadow: inset 0 6px 0 var(--diamond-light), inset 0 -4px 0 var(--diamond-grid), 0 8px 0 rgba(0,0,0,0.3);
-  border: 3px solid var(--diamond-border);
-  image-rendering: pixelated;
-}
-/* 3rd — Gold Block */
-.podium-3rd {
-  height: 70px;
-  background-color: var(--goldblock-base);
-  background-image:
-    repeating-linear-gradient(90deg, var(--goldblock-grid) 0px, var(--goldblock-grid) 2px, transparent 2px, transparent 30px),
-    repeating-linear-gradient(0deg,  var(--goldblock-grid) 0px, var(--goldblock-grid) 2px, transparent 2px, transparent 30px),
-    repeating-linear-gradient(45deg, #e6c938 0px, #e6c938 4px, #f9d939 4px, #f9d939 8px);
-  box-shadow: inset 0 6px 0 var(--goldblock-light), inset 0 -4px 0 var(--goldblock-grid), 0 8px 0 rgba(0,0,0,0.3);
-  border: 3px solid var(--goldblock-border);
-  image-rendering: pixelated;
-}
-
-/* ===== PLAQUE ===== */
-.plaque {
-  border: 2px solid var(--border-dark);
-  box-shadow: inset -2px -2px 0 rgba(0,0,0,0.25), inset 2px 2px 0 rgba(255,255,255,0.15);
-  font-family: var(--font-pixel); font-size: 9px;
-  padding: 5px 10px; text-align: center;
-}
-.podium-1st .plaque { background: var(--netherite-light); color: #c8d0d8; }
-.podium-2nd .plaque { background: var(--diamond-light);  color: var(--diamond-border); }
-.podium-3rd .plaque { background: var(--goldblock-light); color: var(--goldblock-border); }
-
-/* ===== PULSE ===== */
-.pulse .podium-username {
-  animation: namePulse 0.5s ease-out;
-}
-@keyframes namePulse {
-  0% { transform: scale(1); }
-  50% { transform: scale(1.12); color: #fbbf24; }
-  100% { transform: scale(1); }
-}
-/* ===== END TOP GIFTER PODIUM ===== */
+.lb-score-icon { font-size: 12px; line-height: 1; }
+/* When score is hidden, keep row aligned without gaps */
+.lb-row .lb-score:empty { min-width: 0; padding-left: 0; }
+/* ===== END TOP GIFTER LEADERBOARD ===== */
 
 /* ============ GIFT GOAL OVERLAY ============ */
 .gg-wrap {
@@ -1711,6 +1741,126 @@ html, body {
 @keyframes chatPixelTwinkle { 0%, 100% { opacity:.65; } 50% { opacity:1; } }
 @keyframes chatLegendBreathe { 0%, 100% { filter:none; } 50% { filter:brightness(1.08); } }
 /* ===== CHAT PIXEL TIER RESTYLE END ===== */
+
+/* ===== GIFT ROULETTE (single-row slot, Minecraft theme) ===== */
+/* Fixed-geometry rule: card box NEVER changes with pool size or label length. */
+.rl-wrap {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 24px;
+  display: none;
+  z-index: 50;
+}
+.rl-wrap.rl-visible { display: block; }
+.rl-card {
+  width: 360px;
+  box-sizing: border-box;
+  background: #1d1f24;
+  border: 3px solid #3a3d44;
+  box-shadow: inset 0 0 0 2px #101114, 4px 4px 0 rgba(0,0,0,.55);
+  image-rendering: pixelated;
+  font-family: var(--font-mc), 'Minecraftia', monospace;
+}
+.rl-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px 2px 10px;
+}
+.rl-title {
+  font-size: 13px;
+  color: #ffd75e;
+  text-shadow: 2px 2px 0 #000;
+  -webkit-text-fill-color: #ffd75e;
+  -webkit-text-stroke: 0 transparent;
+  letter-spacing: 1px;
+}
+.rl-trigger {
+  font-size: 11px;
+  color: #fff;
+  text-shadow: 1px 1px 0 #000;
+  -webkit-text-fill-color: #fff;
+  -webkit-text-stroke: 0 transparent;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rl-body { padding: 0 8px 8px 8px; }
+.rl-window {
+  height: 52px;
+  overflow: hidden;
+  position: relative;
+  background: #101114;
+  border: 2px solid #2a2d33;
+  box-shadow: inset 2px 2px 0 rgba(0,0,0,.6);
+}
+.rl-strip { will-change: transform; }
+.rl-row {
+  height: 52px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  filter: grayscale(1) brightness(.6);
+}
+.rl-row.rl-winner {
+  filter: none;
+  background: rgba(255, 215, 94, .14);
+}
+.rl-icon-wrap {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  border: 2px solid #3a3d44;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.rl-icon-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+  border-radius: 0;
+  display: block;
+}
+.rl-icon-fallback {
+  font-size: 20px;
+  color: #666;
+  line-height: 1;
+}
+.rl-texts { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rl-label {
+  font-size: 13px;
+  color: #fff;
+  text-shadow: 1px 1px 0 #000;
+  -webkit-text-fill-color: #fff;
+  -webkit-text-stroke: 0 transparent;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 250px;
+}
+.rl-gift-name {
+  font-size: 10px;
+  color: #9aa0ab;
+  text-shadow: 1px 1px 0 #000;
+  -webkit-text-fill-color: #9aa0ab;
+  -webkit-text-stroke: 0 transparent;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 250px;
+}
+.rl-winner .rl-label { color: #ffd75e; -webkit-text-fill-color: #ffd75e; }
+.rl-row.rl-winner .rl-icon-wrap { border-color: #ffd75e; }
+/* ===== GIFT ROULETTE END ===== */
 </style>
 </head>
 <body>
@@ -1848,94 +1998,12 @@ html, body {
   <div class="gg-progress" id="gg-progress"><span class="gg-current" id="gg-current">0</span>/<span class="gg-goal" id="gg-goal">100</span></div>
 </div>
 {% elif overlay_type == 'topgifter' %}
-<div class="podium-wrap" id="podium-wrap">
-  <div class="podium-banner">
-    <div class="podium-banner-text">⭐ GIFTER'S STAND ⭐</div>
+<div class="lb-wrap" id="lb-wrap">
+  <div class="lb-header">
+    <div class="lb-tab" id="lb-tab-gifters">🪙 TOP GIFTERS</div>
+    <div class="lb-tab" id="lb-tab-likers">❤️ TOP LIKERS</div>
   </div>
-  <div class="podium-stage">
-    <!-- 2nd (left) -->
-    <div class="column-wrapper" id="col-2" style="opacity:0">
-      <div class="avatar-frame frame-2nd rank-2" id="av-2">
-        <img id="av-img-2" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="" style="display:none">
-        <div class="avatar-fallback">?</div>
-      </div>
-      <div class="podium-username" id="name-2">---</div>
-      <div class="score-badge"><span class="score-star">⭐</span><span id="score-2">0</span></div>
-      <div class="podium-block podium-2nd">
-        <div class="plaque">2nd</div>
-      </div>
-    </div>
-
-    <!-- 1st (center, tallest) -->
-    <div class="column-wrapper" id="col-1" style="opacity:0">
-      <div class="crown-container">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 8" style="width:44px;height:32px;shape-rendering:crispEdges;">
-          <rect x="5" y="0" width="1" height="1" fill="#311405"/>
-          <rect x="0" y="1" width="1" height="1" fill="#311405"/>
-          <rect x="4" y="1" width="1" height="1" fill="#311405"/>
-          <rect x="5" y="1" width="1" height="1" fill="#f7d57c"/>
-          <rect x="6" y="1" width="1" height="1" fill="#311405"/>
-          <rect x="10" y="1" width="1" height="1" fill="#311405"/>
-          <rect x="0" y="2" width="2" height="1" fill="#311405"/>
-          <rect x="3" y="2" width="1" height="1" fill="#311405"/>
-          <rect x="4" y="2" width="3" height="1" fill="#f7d57c"/>
-          <rect x="7" y="2" width="1" height="1" fill="#311405"/>
-          <rect x="9" y="2" width="2" height="1" fill="#311405"/>
-          <rect x="0" y="3" width="1" height="1" fill="#311405"/>
-          <rect x="1" y="3" width="1" height="1" fill="#f7d57c"/>
-          <rect x="2" y="3" width="2" height="1" fill="#311405"/>
-          <rect x="4" y="3" width="1" height="1" fill="#f7d57c"/>
-          <rect x="5" y="3" width="1" height="1" fill="#4287f5"/>
-          <rect x="6" y="3" width="1" height="1" fill="#f7d57c"/>
-          <rect x="7" y="3" width="2" height="1" fill="#311405"/>
-          <rect x="9" y="3" width="1" height="1" fill="#9e661b"/>
-          <rect x="10" y="3" width="1" height="1" fill="#311405"/>
-          <rect x="0" y="4" width="1" height="1" fill="#311405"/>
-          <rect x="1" y="4" width="2" height="1" fill="#f7d57c"/>
-          <rect x="3" y="4" width="1" height="1" fill="#311405"/>
-          <rect x="4" y="4" width="1" height="1" fill="#f7d57c"/>
-          <rect x="5" y="4" width="1" height="1" fill="#a6c8ff"/>
-          <rect x="6" y="4" width="1" height="1" fill="#f7d57c"/>
-          <rect x="7" y="4" width="1" height="1" fill="#311405"/>
-          <rect x="8" y="4" width="2" height="1" fill="#9e661b"/>
-          <rect x="10" y="4" width="1" height="1" fill="#311405"/>
-          <rect x="0" y="5" width="1" height="1" fill="#311405"/>
-          <rect x="1" y="5" width="7" height="1" fill="#f7d57c"/>
-          <rect x="8" y="5" width="2" height="1" fill="#9e661b"/>
-          <rect x="10" y="5" width="1" height="1" fill="#311405"/>
-          <rect x="0" y="6" width="1" height="1" fill="#311405"/>
-          <rect x="1" y="6" width="4" height="1" fill="#f7d57c"/>
-          <rect x="5" y="6" width="1" height="1" fill="#e5a93b"/>
-          <rect x="6" y="6" width="2" height="1" fill="#f7d57c"/>
-          <rect x="8" y="6" width="2" height="1" fill="#9e661b"/>
-          <rect x="10" y="6" width="1" height="1" fill="#311405"/>
-          <rect x="1" y="7" width="9" height="1" fill="#311405"/>
-        </svg>
-      </div>
-      <div class="avatar-frame frame-1st rank-1" id="av-1">
-        <img id="av-img-1" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="" style="display:none">
-        <div class="avatar-fallback">?</div>
-      </div>
-      <div class="podium-username" id="name-1">---</div>
-      <div class="score-badge"><span class="score-star">⭐</span><span id="score-1">0</span></div>
-      <div class="podium-block podium-1st">
-        <div class="plaque">1st PLACE</div>
-      </div>
-    </div>
-
-    <!-- 3rd (right) -->
-    <div class="column-wrapper" id="col-3" style="opacity:0">
-      <div class="avatar-frame frame-3rd rank-3" id="av-3">
-        <img id="av-img-3" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="" style="display:none">
-        <div class="avatar-fallback">?</div>
-      </div>
-      <div class="podium-username" id="name-3">---</div>
-      <div class="score-badge"><span class="score-star">⭐</span><span id="score-3">0</span></div>
-      <div class="podium-block podium-3rd">
-        <div class="plaque">3rd</div>
-      </div>
-    </div>
-  </div>
+  <div class="lb-list" id="lb-list"></div>
 </div>
 {% elif overlay_type == 'oneblock' %}
 <div class="ob-wrap" id="ob-wrap" aria-hidden="true">
@@ -1957,6 +2025,20 @@ html, body {
     </div>
   </div>
 </div>
+{% elif overlay_type == 'roulette' %}
+<div class="rl-wrap" id="rl-wrap" aria-hidden="true">
+  <div class="rl-card">
+    <div class="rl-header">
+      <span class="rl-title">ROULETTE</span>
+      <span class="rl-trigger" id="rl-trigger"></span>
+    </div>
+    <div class="rl-body">
+      <div class="rl-window">
+        <div class="rl-strip" id="rl-strip"></div>
+      </div>
+    </div>
+  </div>
+</div>
 {% else %}
 <div class="overlay-wrap" data-type="{{ overlay_type }}">
   <div class="overlay-feed" id="feed"></div>
@@ -1972,7 +2054,9 @@ const isPreview = params.get('preview') === 'true';
 // Packed TikTok animations require CPU readback/compositing. OBS gets a
 // bounded 20 FPS path; dashboard previews intentionally use the static icon.
 const PACKED_ALPHA_FRAME_MS = 50;
-const PACKED_ALPHA_CROP_SCAN_FRAMES = 10;
+// Learn one mask sample per budgeted 20 FPS frame across the first complete loop.
+// Some gifts reveal their upper half well after the first ten rendered frames.
+const PACKED_ALPHA_CROP_SAMPLE_MS = 50;
 
 // ===== Song overlay skin selector (additive — default skin unchanged) =====
 // ?skin=pixel → 8-bit/pixel art look via [data-skin="pixel"] CSS block.
@@ -2021,8 +2105,8 @@ if (isPreview) {
       tsWrap.style.left = '50%';
       tsWrap.style.transform = 'translate(-50%, -50%)';
     }
-    // Center the podium wrap
-    const pWrap = document.querySelector('.podium-wrap');
+    // Center the leaderboard wrap
+    const pWrap = document.querySelector('.lb-wrap');
     if (pWrap) {
       pWrap.style.top = '50%';
       pWrap.style.left = '50%';
@@ -2063,12 +2147,15 @@ async function fetchData() {
               : TYPE === 'coingoal' ? '/api/stats/coingoal'
               : TYPE === 'topgifter' ? '/api/stats/topgifter'
               : TYPE === 'giftgoal' ? '/api/stats/giftgoal'
+              : TYPE === 'roulette' ? '/api/stats/roulette'
               : TYPE === 'oneblock' ? 'http://127.0.0.1:5943/oneblock'
               : '/api/stats/superfan';
     const requestUrl = TYPE === 'coingoal'
       ? url + (url.includes('?') ? '&' : '?') + '_=' + Date.now()
+      : TYPE === 'roulette'
+      ? url + (url.includes('?') ? '&' : '?') + '_=' + Date.now()
       : url;
-    const res = await fetch(requestUrl, TYPE === 'coingoal' ? { cache: 'no-store' } : undefined);
+    const res = await fetch(requestUrl, TYPE === 'coingoal' || TYPE === 'roulette' ? { cache: 'no-store' } : undefined);
     const data = await res.json();
     if (TYPE === 'superfan') handleSuperfan(data);
     else if (TYPE === 'topgift') handleTopGift(data);
@@ -2078,6 +2165,7 @@ async function fetchData() {
     else if (TYPE === 'coingoal') handleCoinGoal(data);
     else if (TYPE === 'topgifter') handleTopGifter(data);
     else if (TYPE === 'giftgoal') handleGiftGoal(data);
+    else if (TYPE === 'roulette') handleRoulette(data);
     else if (TYPE === 'oneblock') renderOneBlock(data);
     else renderEntries(data);
   } catch(e) {}
@@ -2536,7 +2624,15 @@ function tgRenderGiftMedia(top, diamondVal) {
     const rgb = rgbCanvas.getContext('2d', { willReadFrequently: true });
     const alpha = alphaCanvas.getContext('2d', { willReadFrequently: true });
     const maskOut = maskOutCanvas.getContext('2d', { willReadFrequently: true });
-    const state = { video, raf: 0, crop: null, cropScanFrames: 0, lastDrawAt: 0 };
+    const state = {
+      video,
+      raf: 0,
+      crop: null,
+      cropLearning: true,
+      lastCropSampleBucket: -1,
+      lastVideoTime: -1,
+      lastDrawAt: 0,
+    };
     tgAnimState = state;
 
     const findMaskBox = (mask) => {
@@ -2579,12 +2675,18 @@ function tgRenderGiftMedia(top, diamondVal) {
         maskOut.clearRect(0, 0, outW, outH);
         rgb.drawImage(video, 0, 0, srcW, srcH, 0, 0, workW, workH);
         alpha.drawImage(video, srcW, 0, srcW, srcH, 0, 0, workW, workH);
-        // Scan only the first few composited frames to learn a stable union crop.
-        // The old code did this full work-canvas CPU scan every browser frame.
-        if (!state.crop || state.cropScanFrames < PACKED_ALPHA_CROP_SCAN_FRAMES) {
+        // Freeze only after the video has wrapped once. Sampling sparsely across
+        // that first full loop keeps the CPU budget bounded while including gifts
+        // that begin at the bottom and expand upward later in their animation.
+        if (state.cropLearning && state.lastVideoTime >= 0 && video.currentTime + 0.05 < state.lastVideoTime) {
+          state.cropLearning = false;
+        }
+        state.lastVideoTime = video.currentTime;
+        const sampleBucket = Math.floor((video.currentTime * 1000) / PACKED_ALPHA_CROP_SAMPLE_MS);
+        if (state.cropLearning && sampleBucket !== state.lastCropSampleBucket) {
+          state.lastCropSampleBucket = sampleBucket;
           const mask = alpha.getImageData(0, 0, workW, workH).data;
           const box = findMaskBox(mask);
-          state.cropScanFrames++;
           if (box) {
             state.crop = !state.crop ? box : {
               x1: Math.min(state.crop.x1, box.x1),
@@ -2601,12 +2703,10 @@ function tgRenderGiftMedia(top, diamondVal) {
         }
         const cropW = Math.max(1, c.x2 - c.x1);
         const cropH = Math.max(1, c.y2 - c.y1);
-        // Cover-style: fill the panel edge-to-edge (no boxed empty space).
-        // Anchor vertically to the BOTTOM so overflow goes to the top —
-        // the bottom of the gift (which is usually the important part) is
-        // preserved. Only some gifts had this issue because their content
-        // sits lower in the crop box; center-anchor cut their bottom off.
-        const scale = Math.max(outW / cropW, outH / cropH);
+        // Contain the complete learned gift bounds. The old cover-style scale
+        // deliberately overflowed the canvas and clipped tall gifts at the top.
+        // Keep bottom anchoring for compact assets, but never exceed the canvas.
+        const scale = Math.min(outW / cropW, outH / cropH);
         const drawW = Math.max(1, Math.round(cropW * scale));
         const drawH = Math.max(1, Math.round(cropH * scale));
         const dx = Math.round((outW - drawW) / 2);
@@ -2636,8 +2736,25 @@ function tgRenderGiftMedia(top, diamondVal) {
   video.src = assetUrl;
 }
 
-function handleTopGift(gifts) {
-  if (!gifts || gifts.length === 0) return;
+let tgLayout = 'left';  // Default layout, updated from payload {topgift: {...}, layout: '...'}
+
+function handleTopGift(data) {
+  // Data now arrives as {topgift: {...}, layout: 'left'/'center'/'right'} instead of array
+  if (!data || typeof data !== 'object') return;
+  const gifts = (Array.isArray(data)) ? data : (data.topgift ? [data.topgift] : []);
+  if (gifts.length === 0) return;
+  
+  // Apply the dashboard-chosen layout
+  const newLayout = String(data.layout || 'left').toLowerCase();
+  const valid = {'left':1,'center':1,'right':1};
+  if (valid[newLayout]) {
+    tgLayout = newLayout;
+    document.body.setAttribute('data-tglayout', tgLayout);
+  } else {
+    document.body.removeAttribute('data-tglayout');
+    tgLayout = 'left';
+  }
+  
   // Find the gift with the highest single-gift value (diamond_count), not total coins
   const top = gifts.reduce((max, g) => {
     const val = g.diamond_count || (g.total_coins && g.repeat_count ? Math.round(g.total_coins / g.repeat_count) : 0);
@@ -2751,9 +2868,25 @@ let currentTopStreak = 0;
 let lastBurstStreak = 0;
 let tsSparklesCreated = false;
 let tsRenderedKey = '';
+let tsLayout = 'left';  // Default layout, updated from payload {entries: [...], layout: '...'}
 
 function handleTopStreak(gifts) {
-  if (!gifts || gifts.length === 0) return;
+  // Data arrives as {entries: [...], layout: 'left'/'center'/'right'} from summary=topstreak,
+  // or a bare array from the showcase handoff / older callers.
+  if (!gifts) return;
+  if (!Array.isArray(gifts)) {
+    const newLayout = String(gifts.layout || '').toLowerCase();
+    const validLayouts = {'left':1,'center':1,'right':1};
+    if (validLayouts[newLayout]) {
+      tsLayout = newLayout;
+      document.body.setAttribute('data-tslayout', tsLayout);
+    } else {
+      document.body.removeAttribute('data-tslayout');
+      tsLayout = 'left';
+    }
+    gifts = Array.isArray(gifts.entries) ? gifts.entries : [];
+  }
+  if (gifts.length === 0) return;
   // Find the gift with the highest repeat_count (longest streak)
   const top = gifts.reduce((max, g) => {
     return (g.repeat_count || 0) >= (max.repeat_count || 0) ? g : max;
@@ -2908,8 +3041,8 @@ function handleTopShowcase(data) {
   const streak = data && data.topstreak && (data.topstreak.repeat_count || 0) > 1 ? data.topstreak : null;
   showcaseAvailable = { gift: !!gift, streak: !!streak };
 
-  if (gift) handleTopGift([gift]);
-  if (streak) handleTopStreak([streak]);
+  if (gift) handleTopGift({ topgift: gift, layout: (data && data.layout) || undefined });
+  if (streak) handleTopStreak({ entries: [streak], layout: (data && data.layout) || undefined });
 
   if (!showcaseCurrent || !showcaseAvailable[showcaseCurrent]) showcaseTick();
   if (!showcaseTimer && (showcaseAvailable.gift || showcaseAvailable.streak)) {
@@ -3581,7 +3714,15 @@ function ggRenderGiftMedia(data) {
     const rgb = rgbCanvas.getContext('2d', { willReadFrequently: true });
     const alpha = alphaCanvas.getContext('2d', { willReadFrequently: true });
     const maskOut = maskOutCanvas.getContext('2d', { willReadFrequently: true });
-    const state = { video, raf: 0, crop: null, cropScanFrames: 0, lastDrawAt: 0 };
+    const state = {
+      video,
+      raf: 0,
+      crop: null,
+      cropLearning: true,
+      lastCropSampleBucket: -1,
+      lastVideoTime: -1,
+      lastDrawAt: 0,
+    };
     ggAnimState = state;
 
     const findMaskBox = (mask) => {
@@ -3624,11 +3765,15 @@ function ggRenderGiftMedia(data) {
         maskOut.clearRect(0, 0, outW, outH);
         rgb.drawImage(video, 0, 0, srcW, srcH, 0, 0, workW, workH);
         alpha.drawImage(video, srcW, 0, srcW, srcH, 0, 0, workW, workH);
-        // Scan only the first few composited frames to learn a stable union crop.
-        if (!state.crop || state.cropScanFrames < PACKED_ALPHA_CROP_SCAN_FRAMES) {
+        if (state.cropLearning && state.lastVideoTime >= 0 && video.currentTime + 0.05 < state.lastVideoTime) {
+          state.cropLearning = false;
+        }
+        state.lastVideoTime = video.currentTime;
+        const sampleBucket = Math.floor((video.currentTime * 1000) / PACKED_ALPHA_CROP_SAMPLE_MS);
+        if (state.cropLearning && sampleBucket !== state.lastCropSampleBucket) {
+          state.lastCropSampleBucket = sampleBucket;
           const mask = alpha.getImageData(0, 0, workW, workH).data;
           const box = findMaskBox(mask);
-          state.cropScanFrames++;
           if (box) {
             state.crop = !state.crop ? box : {
               x1: Math.min(state.crop.x1, box.x1),
@@ -3645,7 +3790,7 @@ function ggRenderGiftMedia(data) {
         }
         const cropW = Math.max(1, c.x2 - c.x1);
         const cropH = Math.max(1, c.y2 - c.y1);
-        const scale = Math.max(outW / cropW, outH / cropH);
+        const scale = Math.min(outW / cropW, outH / cropH);
         const drawW = Math.max(1, Math.round(cropW * scale));
         const drawH = Math.max(1, Math.round(cropH * scale));
         const dx = Math.round((outW - drawW) / 2);
@@ -3708,80 +3853,340 @@ function handleGiftGoal(data) {
   }
 }
 
-// ============ TOP GIFTER PODIUM (Stardew Valley) ============
-let prevGifterHash = '';
+// ============ TOP GIFT/LIKE LEADERBOARD (rotating list) ============
+// Rotates between Top Gifters (coins) and Top Likers (likes) every 5s.
+// Both boards come from /api/stats/topgifter as {gifters, likers} top-10,
+// plus live show_gift_amounts / show_like_amounts flags (dashboard toggles).
+let lbData = { gifters: [], likers: [] };
+let lbMode = 'gifters';              // active board
+let lbRenderedMode = '';             // last rendered board (rotation detection)
+let lbLastHash = '';
+// Amount visibility — populated from the poll payload each tick; defaults
+// false (hidden) so amounts stay off until the dashboard enables them.
+let lbShowAmounts = { show_gift_amounts: false, show_like_amounts: false };
 
-function handleTopGifter(data) {
-  const wrap = document.getElementById('podium-wrap');
-  if (!wrap) return;
+function lbRender() {
+  const wrap = document.getElementById('lb-wrap');
+  const list = document.getElementById('lb-list');
+  const tabG = document.getElementById('lb-tab-gifters');
+  const tabL = document.getElementById('lb-tab-likers');
+  if (!wrap || !list || !tabG || !tabL) return;
 
-  if (!data || !Array.isArray(data) || data.length === 0) {
+  tabG.classList.toggle('active', lbMode === 'gifters');
+  tabL.classList.toggle('active', lbMode === 'likers');
+
+  const modeChanged = (lbRenderedMode !== lbMode);
+  lbRenderedMode = lbMode;
+
+  const entries = lbMode === 'gifters' ? lbData.gifters : lbData.likers;
+  const icon = lbMode === 'gifters' ? '🪙' : '❤️';
+  const scoreKey = lbMode === 'gifters' ? 'total_coins' : 'total_likes';
+
+  if (!Array.isArray(entries) || entries.length === 0) {
     wrap.classList.remove('visible');
     return;
   }
+  wrap.classList.add('visible');
 
-  const hash = JSON.stringify(data.map(g => `${g.nick}:${g.total_coins}:${g.avatar_url || ''}`));
-  if (hash === prevGifterHash) {
-    wrap.classList.add('visible');
-    return;
-  }
-  prevGifterHash = hash;
+  const rows = entries.slice(0, 10);
 
-  for (let i = 0; i < 3; i++) {
-    const entry = data[i] || null;
-    const idx = i + 1;
-    const col = document.getElementById('col-' + idx);
-    const nameEl = document.getElementById('name-' + idx);
-    const scoreEl = document.getElementById('score-' + idx);
-    const frame = document.getElementById('av-' + idx);
-    if (!col || !nameEl || !scoreEl || !frame) continue;
+  // Keyed reconciliation (2026-08-05 flicker fix): score-only updates patch
+  // existing rows IN PLACE — no DOM rebuild, so the lbRowIn entrance animation
+  // never replays on every like/coin tick. Only genuinely new rows and board
+  // rotations (modeChanged) get the staggered slide-in.
+  if (modeChanged) list.innerHTML = '';
+  while (list.children.length > rows.length) list.removeChild(list.lastChild);
 
-    if (!entry) { col.style.opacity = '0'; continue; }
-    col.style.opacity = '1';
-
-    nameEl.textContent = entry.nick || '???';
-    scoreEl.textContent = entry.total_coins ? entry.total_coins.toLocaleString() : '0';
-
-    const img = frame.querySelector('img');
-    const fb = frame.querySelector('.avatar-fallback');
-    const initial = (entry.nick || '?').charAt(0).toUpperCase();
-    if (fb) fb.textContent = initial;
-    if (entry.avatar_url) {
-      if (img) {
-        img.onload = function() {
-          this.style.display = '';
-          if (fb) fb.style.display = 'none';
-        };
-        img.onerror = function() {
-          this.style.display = 'none';
-          if (fb) fb.style.display = '';
-        };
-        img.src = escAttr(entry.avatar_url);
-        img.style.display = 'none';
-      }
-      if (fb) fb.style.display = '';
+  rows.forEach((e, i) => {
+    const num = parseInt(e[scoreKey], 10) || 0;
+    
+    // Apply visibility from the live payload flags (both default OFF/hidden).
+    let showAmount = false;
+    if (lbMode === 'gifters') {
+      showAmount = !!lbShowAmounts.show_gift_amounts;
     } else {
-      if (img) { img.style.display = 'none'; img.onerror = null; img.onload = null; }
-      if (fb) { fb.textContent = initial; fb.style.display = ''; }
+      showAmount = !!lbShowAmounts.show_like_amounts;
+    }
+    const scoreHtml = showAmount 
+      ? '<span class="lb-score-icon">' + icon + '</span>' + num.toLocaleString()
+      : '';
+    const nick = e.nick || '???';
+
+    const row = list.children[i];
+    if (row) {
+      // Patch in place — no animation restart.
+      row.querySelector('.lb-rank').textContent = i + 1;
+      const nameEl = row.querySelector('.lb-name');
+      nameEl.textContent = nick;
+      nameEl.title = nick;
+      row.querySelector('.lb-score').innerHTML = scoreHtml;
+      lbPatchAvatar(row.querySelector('.lb-avatar'), e, i === 0);
+      return;
     }
 
-    // Pulse on update
-    col.classList.remove('pulse');
-    void col.offsetWidth;
-    col.classList.add('pulse');
-  }
+    // Brand-new row — build once, animate entrance once.
+    const newRow = document.createElement('div');
+    newRow.className = 'lb-row lb-new';
+    newRow.style.animationDelay = (i * 0.04) + 's';
 
-  wrap.classList.add('visible');
+    const rank = document.createElement('div');
+    rank.className = 'lb-rank';
+    rank.textContent = i + 1;
+
+    const avWrap = document.createElement('div');
+    avWrap.className = 'lb-avatar';
+    avWrap.style.position = 'relative';
+    lbPatchAvatar(avWrap, e, i === 0);
+
+    const name = document.createElement('div');
+    name.className = 'lb-name';
+    name.textContent = nick;
+    name.title = nick;
+
+    const score = document.createElement('div');
+    score.className = 'lb-score';
+    score.innerHTML = scoreHtml;
+
+    newRow.appendChild(rank);
+    newRow.appendChild(avWrap);
+    newRow.appendChild(name);
+    newRow.appendChild(score);
+    list.appendChild(newRow);
+  });
 }
 
+// Avatar subtree: pixel crown on rank 1 + initials fallback + img with
+// onload/onerror. Rebuilds only when the avatar_url identity changes;
+// otherwise just refreshes the initial letter.
+function lbPatchAvatar(avWrap, e, isTop) {
+  if (!avWrap) return;
+  const curCrown = avWrap.querySelector('.lb-crown');
+  if (isTop && !curCrown) {
+    const crown = document.createElement('div');
+    crown.className = 'lb-crown';
+    crown.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 8" style="width:26px;height:19px;shape-rendering:crispEdges;">'
+      + '<rect x="0" y="1" width="1" height="1" fill="#311405"/><rect x="5" y="0" width="1" height="1" fill="#311405"/><rect x="10" y="1" width="1" height="1" fill="#311405"/>'
+      + '<rect x="0" y="2" width="2" height="1" fill="#311405"/><rect x="4" y="1" width="3" height="1" fill="#f7d57c"/><rect x="9" y="2" width="2" height="1" fill="#311405"/>'
+      + '<rect x="0" y="3" width="11" height="1" fill="#f7d57c"/>'
+      + '<rect x="0" y="4" width="11" height="1" fill="#e5a93b"/>'
+      + '<rect x="0" y="5" width="1" height="1" fill="#311405"/><rect x="1" y="5" width="9" height="1" fill="#f7d57c"/><rect x="10" y="5" width="1" height="1" fill="#311405"/>'
+      + '<rect x="1" y="6" width="9" height="1" fill="#311405"/></svg>';
+    avWrap.insertBefore(crown, avWrap.firstChild);
+  } else if (!isTop && curCrown) {
+    curCrown.remove();
+  }
+
+  const want = e.avatar_url || '';
+  if (avWrap.getAttribute('data-avatar-key') === want) {
+    const fb = avWrap.querySelector('.lb-avatar-fb');
+    if (fb) fb.textContent = (e.nick || '?').charAt(0).toUpperCase();
+    return;
+  }
+  avWrap.setAttribute('data-avatar-key', want);
+  const oldImg = avWrap.querySelector('img');
+  if (oldImg) oldImg.remove();
+
+  const initial = (e.nick || '?').charAt(0).toUpperCase();
+  let fb = avWrap.querySelector('.lb-avatar-fb');
+  if (!fb) {
+    fb = document.createElement('div');
+    fb.className = 'lb-avatar-fb';
+    avWrap.appendChild(fb);
+  }
+  fb.textContent = initial;
+  fb.style.display = '';
+  if (want) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.onload = function() { fb.style.display = 'none'; };
+    img.onerror = function() { fb.style.display = ''; };
+    img.src = want;
+    avWrap.appendChild(img);
+  }
+}
+
+function handleTopGifter(data) {
+  // Accept the new {gifters, likers, show_gift_amounts, show_like_amounts}
+  // shape (dashboard reset returns [] mid-switch).
+  if (!data || typeof data !== 'object') return;
+  const gifters = Array.isArray(data.gifters) ? data.gifters : [];
+  const likers = Array.isArray(data.likers) ? data.likers : [];
+  const showGift = !!data.show_gift_amounts;
+  const showLike = !!data.show_like_amounts;
+  // Include the visibility flags in the hash so a dashboard toggle repaints
+  // even when the board data itself hasn't changed.
+  const hash = JSON.stringify([gifters, likers, showGift, showLike]);
+  if (hash === lbLastHash) return;   // no change; rotation timer drives redraws
+  lbLastHash = hash;
+  lbData = { gifters, likers };
+  lbShowAmounts = { show_gift_amounts: showGift, show_like_amounts: showLike };
+  lbRender();
+}
+
+// Rotate boards every 5 seconds (only when both have data; otherwise stick
+// to whichever board has entries so the overlay never goes blank on one side).
+setInterval(() => {
+  const hasG = lbData.gifters.length > 0;
+  const hasL = lbData.likers.length > 0;
+  if (hasG && hasL) {
+    lbMode = lbMode === 'gifters' ? 'likers' : 'gifters';
+  } else if (hasG) {
+    lbMode = 'gifters';
+  } else if (hasL) {
+    lbMode = 'likers';
+  }
+  lbRender();
+}, 5000);
 function escAttr(s) {
   return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
+
+// ===== GIFT ROULETTE (one-transition slot strip) =====
+let rlCurrentSpinId = null;
+let rlHideTimer = null;
+
+function rlHide() {
+  const wrap = document.getElementById('rl-wrap');
+  if (wrap) {
+    wrap.classList.remove('rl-visible');
+    wrap.setAttribute('aria-hidden', 'true');
+  }
+  const strip = document.getElementById('rl-strip');
+  if (strip) strip.innerHTML = '';
+  rlCurrentSpinId = null;
+  if (rlHideTimer) { clearTimeout(rlHideTimer); rlHideTimer = null; }
+}
+
+function rlBuildRow(entry) {
+  const row = document.createElement('div');
+  row.className = 'rl-row';
+  const iconWrap = document.createElement('div');
+  iconWrap.className = 'rl-icon-wrap';
+  const iconUrl = String(entry.icon_url || '');
+  if (iconUrl) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.onload = function() { img.style.display = 'block'; };
+    img.onerror = function() {
+      img.remove();
+      const fb = document.createElement('span');
+      fb.className = 'rl-icon-fallback';
+      fb.textContent = '?';
+      iconWrap.appendChild(fb);
+    };
+    img.src = iconUrl;
+    iconWrap.appendChild(img);
+  } else {
+    const fb = document.createElement('span');
+    fb.className = 'rl-icon-fallback';
+    fb.textContent = '?';
+    iconWrap.appendChild(fb);
+  }
+  const texts = document.createElement('div');
+  texts.className = 'rl-texts';
+  const label = document.createElement('div');
+  label.className = 'rl-label';
+  label.textContent = String(entry.label || '');
+  const giftName = document.createElement('div');
+  giftName.className = 'rl-gift-name';
+  giftName.textContent = '#' + String(entry.gift_id || '');
+  texts.appendChild(label);
+  texts.appendChild(giftName);
+  row.appendChild(iconWrap);
+  row.appendChild(texts);
+  return row;
+}
+
+function rlStartSpin(data) {
+  const wrap = document.getElementById('rl-wrap');
+  const strip = document.getElementById('rl-strip');
+  const trigger = document.getElementById('rl-trigger');
+  if (!wrap || !strip) return;
+
+  rlCurrentSpinId = data.spin_id;
+  if (trigger) {
+    const user = String((data.trigger || {}).user || '');
+    trigger.textContent = user ? ('from ' + user) : '';
+  }
+
+  // Build rows (max 25, ends on winner) — DOM only, no innerHTML injection.
+  strip.innerHTML = '';
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  const reel = Array.isArray(data.reel) ? data.reel : [];
+  reel.forEach(idx => {
+    const entry = entries[idx];
+    if (entry) strip.appendChild(rlBuildRow(entry));
+  });
+  if (!strip.children.length) { rlHide(); return; }
+
+  // Winner highlight is applied at land via the transition end below.
+  wrap.classList.add('rl-visible');
+  wrap.setAttribute('aria-hidden', 'false');
+
+  // One transform transition for the whole roll. Duration derives from the
+  // server timestamps so a mid-spin OBS load lands correctly.
+  const rowH = 52;
+  const distance = (strip.children.length - 1) * rowH;
+  const now = Date.now() / 1000;
+  const landsAt = Number(data.lands_at) || now;
+  const durationMs = Math.max(0, (landsAt - now) * 1000);
+
+  strip.style.transition = 'none';
+  strip.style.transform = 'translate3d(0, 0, 0)';
+  // Force layout so the reset transform commits before the animated one.
+  void strip.offsetHeight;
+
+  const winnerIdx = Math.max(0, reel.length - 1);
+  const finish = () => {
+    const winnerEntry = entries[Number(data.winner_index) || 0];
+    const rows = strip.children;
+    // Highlight the row matching the winner gift id (reel decorates; winner_index selects).
+    if (winnerEntry) {
+      for (let i = 0; i < rows.length; i++) {
+        // rows carry no data; simplest correct approach: highlight the final row
+      }
+    }
+    if (rows.length) rows[rows.length - 1].classList.add('rl-winner');
+    strip.style.willChange = 'auto';
+  };
+
+  if (durationMs <= 0) {
+    // Loaded after land: show winner immediately.
+    strip.style.transform = 'translate3d(0, ' + (-distance) + 'px, 0)';
+    finish();
+  } else {
+    strip.style.willChange = 'transform';
+    requestAnimationFrame(() => {
+      strip.style.transition = 'transform ' + durationMs.toFixed(0) + 'ms cubic-bezier(.15,.85,.25,1)';
+      strip.style.transform = 'translate3d(0, ' + (-distance) + 'px, 0)';
+    });
+    setTimeout(finish, durationMs + 50);
+  }
+
+  // Hide after hold expires (server-authoritative hide_at).
+  if (rlHideTimer) clearTimeout(rlHideTimer);
+  const hideAt = Number(data.hide_at) || (landsAt + 4);
+  const hideMs = Math.max(1000, (hideAt - now) * 1000);
+  rlHideTimer = setTimeout(rlHide, hideMs);
+}
+
+function handleRoulette(data) {
+  if (!data || typeof data !== 'object') return;
+  if (data.status === 'idle') {
+    // Don't hide mid-animation on a single idle poll; the hide timer governs.
+    return;
+  }
+  if (data.spin_id && data.spin_id !== rlCurrentSpinId) {
+    rlStartSpin(data);
+  }
+}
+// ===== GIFT ROULETTE END =====
 
 // ============ INIT ============
 fetchData();
 const overlayPollMs = TYPE === 'song' ? 1000
   : TYPE === 'coingoal' ? 2000
+  : TYPE === 'roulette' ? 500
   : TYPE === 'topgift' || TYPE === 'topstreak' || TYPE === 'topshowcase' ? 3000
   : 1500;
 setInterval(fetchData, overlayPollMs);

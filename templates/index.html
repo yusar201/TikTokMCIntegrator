@@ -8,8 +8,8 @@
   // No-flash theme: apply cached choice before CSS paints. Dark is default.
   try { if (localStorage.getItem('tmc-theme') === 'light') document.documentElement.setAttribute('data-theme','light'); } catch(e){}
 </script>
-<link rel="stylesheet" href="/static/style.css?v=35">
-<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app-font.css?v=1">
+<link rel="stylesheet" href="/static/style.css?v=45">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -26,6 +26,9 @@
     <a class="nav-item active" data-panel="dashboard" onclick="switchPanel('dashboard')">
       <i class="fa-solid fa-chart-simple"></i><span class="nav-label">Dashboard</span>
     </a>
+    <a class="nav-item" data-panel="console" onclick="switchPanel('console')">
+      <i class="fa-solid fa-terminal"></i><span class="nav-label">Console</span>
+    </a>
     <a class="nav-item" data-panel="settings" onclick="switchPanel('settings')">
       <i class="fa-solid fa-gear"></i><span class="nav-label">Settings</span>
     </a>
@@ -34,6 +37,15 @@
     </a>
     <a class="nav-item" data-panel="gifts" onclick="switchPanel('gifts')">
       <i class="fa-solid fa-gift"></i><span class="nav-label">Gifts</span>
+    </a>
+    <a class="nav-item" data-panel="roulette" onclick="switchPanel('roulette')">
+      <i class="fa-solid fa-shuffle"></i><span class="nav-label">Roulette</span>
+    </a>
+    <a class="nav-item" data-panel="gift-studio" onclick="switchPanel('gift-studio')">
+      <i class="fa-solid fa-table-cells-large"></i><span class="nav-label">Gift Card Studio</span>
+    </a>
+    <a class="nav-item" data-panel="points" onclick="switchPanel('points')">
+      <i class="fa-solid fa-coins"></i><span class="nav-label">Points</span>
     </a>
     <a class="nav-item" data-panel="overlays" onclick="switchPanel('overlays')">
       <i class="fa-solid fa-tv"></i><span class="nav-label">Overlays</span>
@@ -121,9 +133,8 @@
         </div>
       </div>
 
-      <!-- Two-column: Ticker + Console -->
-      <div class="two-col">
-        <div class="event-ticker">
+      <!-- Recent Chat (full width) -->
+      <div class="event-ticker" style="margin-bottom:16px;">
           <div class="ticker-header">
             <h3><i class="fa-solid fa-comments"></i> Recent Chat</h3>
             <div style="display:flex;align-items:center;gap:8px;">
@@ -160,32 +171,6 @@
             <div class="ticker-empty">No chat messages yet...</div>
           </div>
         </div>
-
-        <div class="console-panel">
-          <div class="console-header">
-            <h3><i class="fa-solid fa-terminal"></i> Console</h3>
-            <button class="btn btn-ghost btn-sm" onclick="clearConsole()">Clear</button>
-          </div>
-          <div class="console-body" id="terminal-window">
-            Waiting for bot to start...
-          </div>
-        </div>
-      </div>
-
-      <!-- Minecraft Simulated Console (debug) -->
-      <div class="form-card" style="margin-top:16px;">
-        <div class="console-header" style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
-          <h3 style="margin:0;"><i class="fa-solid fa-cube"></i> Minecraft Sim Console</h3>
-          <div style="display:flex; gap:8px; align-items:center;">
-            <input type="text" id="sim-console-input" placeholder="/say hello" style="padding:6px 10px; background:rgba(0,0,0,0.3); color:var(--text-primary); border:1px solid var(--border-subtle); border-radius:6px; font-size:13px; width:280px;" onkeydown="if(event.key==='Enter'){sendSimConsoleCommand();}">
-            <button class="btn btn-ghost btn-sm" onclick="sendSimConsoleCommand()"><i class="fa-solid fa-paper-plane"></i> Send</button>
-            <button class="btn btn-ghost btn-sm" onclick="clearSimConsole()">Clear</button>
-          </div>
-        </div>
-        <div class="console-body" id="sim-console-body" style="max-height:280px;">
-          <span style="opacity:0.5;">No commands sent yet. Connect a connector (RCON or Forge Mod) and trigger an event, or type a command above and hit Enter.</span>
-        </div>
-      </div>
 
       <!-- Gift Log + Follow Log + SuperFan Log -->
       <div class="three-col logs-three-col">
@@ -235,6 +220,38 @@
           <div class="ticker-body" id="superfan-log-container">
             <div class="ticker-empty">No superfan events yet...</div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== CONSOLE PANEL ===== -->
+    <div class="panel" id="panel-console">
+      <div class="section-header">
+        <h2><i class="fa-solid fa-terminal"></i> Console</h2>
+      </div>
+
+      <div class="console-panel" style="height:460px; margin-bottom:16px;">
+        <div class="console-header">
+          <h3><i class="fa-solid fa-terminal"></i> Console</h3>
+          <button class="btn btn-ghost btn-sm" onclick="clearConsole()">Clear</button>
+        </div>
+        <div class="console-body" id="terminal-window">
+          Waiting for bot to start...
+        </div>
+      </div>
+
+      <!-- Minecraft Simulated Console -->
+      <div class="form-card">
+        <div class="console-header" style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+          <h3 style="margin:0;"><i class="fa-solid fa-cube"></i> Minecraft Sim Console</h3>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input type="text" id="sim-console-input" placeholder="/say hello" style="padding:6px 10px; background:rgba(0,0,0,0.3); color:var(--text-primary); border:1px solid var(--border-subtle); border-radius:6px; font-size:13px; width:280px;" onkeydown="if(event.key==='Enter'){sendSimConsoleCommand();}">
+            <button class="btn btn-ghost btn-sm" onclick="sendSimConsoleCommand()"><i class="fa-solid fa-paper-plane"></i> Send</button>
+            <button class="btn btn-ghost btn-sm" onclick="clearSimConsole()">Clear</button>
+          </div>
+        </div>
+        <div class="console-body" id="sim-console-body" style="max-height:360px;">
+          <span style="opacity:0.5;">No commands sent yet. Connect a connector (RCON or Forge Mod) and trigger an event, or type a command above and hit Enter.</span>
         </div>
       </div>
     </div>
@@ -353,6 +370,23 @@
               <span id="gift-asset-downloader-label">Disabled</span>
             </div>
           </div>
+          
+          <!-- Log-Only Mode -->
+          <div class="opt-row">
+            <div class="opt-row-text">
+              <span class="opt-row-title"><i class="fa-solid fa-flask"></i> Log-Only Mode (Test Connection)</span>
+              <span class="opt-row-hint">When ON, all events fire and log normally but NO actions execute. Use to test connections without triggering Minecraft/overlays. Shows "DEBUG MODE" in status bar.</span>
+            </div>
+            <div class="opt-row-control">
+              <label class="eb-toggle">
+                <input type="checkbox" id="log-only-mode">
+                <span class="eb-toggle-slider"></span>
+              </label>
+              <span id="log-only-mode-label">Disabled</span>
+            </div>
+          </div>
+          
+          <!-- Debug Mode -->
           <div class="opt-row">
             <div class="opt-row-text">
               <span class="opt-row-title"><i class="fa-solid fa-bug"></i> Debug Mode</span>
@@ -390,6 +424,7 @@
       <div class="section-header">
         <h2><i class="fa-solid fa-gift"></i> Gifts & Commands</h2>
         <div style="display:flex; gap:8px;">
+          <button class="btn btn-ghost btn-sm" id="btn-refresh-gift-catalog" title="Fetch every TikTok gift: room panel + all regions + full catalog + your own history"><i class="fa-solid fa-rotate"></i> Sync Gift Catalog</button>
           <button class="btn btn-primary btn-sm" id="btn-add-gift"><i class="fa-solid fa-plus"></i> Add Gift</button>
           <button class="btn btn-primary" id="btn-save-gifts"><i class="fa-solid fa-save"></i> Save Gifts</button>
         </div>
@@ -408,8 +443,224 @@
         </div>
       </div>
 
+      <div class="form-card gift-simulator">
+        <div class="gift-sim-heading">
+          <div>
+            <h3><i class="fa-solid fa-flask"></i> Gift Simulator</h3>
+            <div class="form-hint">Runs the selected gift exactly like a completed TikTok gift: global actions plus every configured gift action. It does not add fake history, points, rankings, or overlay entries.</div>
+          </div>
+          <span id="gift-sim-mc" class="gift-sim-mc">{mc}: —</span>
+        </div>
+        <div class="gift-sim-controls">
+          <label><span>Gift</span><span class="gift-sim-picker" id="gift-sim-picker"><button id="gift-sim-picker-button" class="form-input gift-sim-picker-button" type="button" aria-haspopup="listbox" aria-expanded="false"><span class="gift-sim-picker-placeholder">Choose a gift</span><i class="fa-solid fa-chevron-down"></i></button><span id="gift-sim-picker-list" class="gift-sim-picker-list" role="listbox" hidden></span><select id="gift-sim-select" hidden aria-hidden="true"></select></span></label>
+          <label><span>{user}</span><input id="gift-sim-user" class="form-input" type="text" maxlength="100" value="TestViewer" placeholder="TikTok username"></label>
+          <label><span>{amount}</span><input id="gift-sim-amount" class="form-input" type="number" min="1" max="10000" step="1" value="1"></label>
+          <button class="btn btn-primary" id="btn-simulate-gift" type="button"><i class="fa-solid fa-play"></i> Simulate Gift</button>
+        </div>
+        <div id="gift-sim-status" class="gift-sim-status" role="status"></div>
+      </div>
+
       <div class="gifts-grid" id="gifts-container">
         <!-- Populated by JS -->
+      </div>
+    </div>
+
+    <!-- ===== ROULETTE PANEL ===== -->
+    <div class="panel" id="panel-roulette">
+      <div class="section-header">
+        <h2><i class="fa-solid fa-shuffle"></i> Gift Roulette</h2>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-ghost btn-sm" id="btn-roulette-test"><i class="fa-solid fa-play"></i> Test Spin</button>
+          <button class="btn btn-primary" id="btn-roulette-save"><i class="fa-solid fa-save"></i> Save Roulette</button>
+        </div>
+      </div>
+
+      <div class="form-card">
+        <div class="roulette-enable-row">
+          <label class="roulette-toggle">
+            <input type="checkbox" id="roulette-enabled">
+            <span>Enable Gift Roulette</span>
+          </label>
+          <span class="form-hint">The trigger gift starts a slot spin; the winning gift's full action bundle fires when it lands. Applies live — no restart.</span>
+        </div>
+
+        <div class="roulette-grid">
+          <div class="roulette-col">
+            <h3><i class="fa-solid fa-bullseye"></i> Trigger</h3>
+            <div class="form-hint">Send this exact gift to start a spin (completed gifts only; streak triggers spin once at the end).</div>
+            <div id="roulette-trigger-picker" class="roulette-picker"></div>
+
+            <h3 style="margin-top:14px;"><i class="fa-solid fa-clock"></i> Timing</h3>
+            <div class="roulette-timings">
+              <label><span>Spin (s)</span><input type="number" id="roulette-spin-ms" class="form-input" min="2" max="10" step="1" value="5"></label>
+              <label><span>Hold (s)</span><input type="number" id="roulette-hold-ms" class="form-input" min="1" max="10" step="1" value="4"></label>
+              <label><span>Cooldown (s)</span><input type="number" id="roulette-cooldown-ms" class="form-input" min="0" max="60" step="1" value="2"></label>
+            </div>
+          </div>
+
+          <div class="roulette-col">
+            <h3><i class="fa-solid fa-list"></i> Prize Pool <span id="roulette-pool-count" class="roulette-count">0 events</span></h3>
+            <div class="form-hint">Every entry is one of your configured gifts — the whole action bundle runs when it wins.</div>
+            <div id="roulette-pool-list" class="roulette-pool-list"></div>
+            <div class="roulette-pool-actions">
+              <select id="roulette-add-select" class="form-input"><option value="">Add configured gift…</option></select>
+              <button class="btn btn-ghost btn-sm" id="btn-roulette-add"><i class="fa-solid fa-plus"></i> Add</button>
+            </div>
+            <div id="roulette-warnings" class="roulette-warnings"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-card">
+        <h3><i class="fa-solid fa-tv"></i> Last Spin</h3>
+        <div id="roulette-status" class="roulette-status">No spins yet this session.</div>
+      </div>
+    </div>
+
+    <!-- ===== GIFT CARD STUDIO PANEL ===== -->
+    <div class="panel" id="panel-gift-studio">
+      <link rel="stylesheet" href="/static/gift-studio/studio.css?v=12">
+      <div class="gcs-shell">
+        <header class="gcs-header">
+          <div><span class="gcs-kicker">CREATOR TOOLS</span><h2>Gift Card Studio</h2><p>Design, generate, and save a finished PNG or GIF for OBS.</p></div>
+          <div class="gcs-project-tools">
+            <select id="gcs-project-select" aria-label="Project"></select>
+            <button class="btn btn-ghost btn-sm" id="gcs-new-project">New</button>
+            <button class="btn btn-danger btn-sm" id="gcs-delete-project">Delete</button>
+            <button class="btn btn-primary btn-sm" id="gcs-save-project">Save</button>
+          </div>
+        </header>
+        <nav class="gcs-tabs" aria-label="Studio sections">
+          <button data-gcs-tab="catalog" class="active">Catalog</button><button data-gcs-tab="editor">Card Editor</button><button data-gcs-tab="layout">Pages &amp; Layout</button><button data-gcs-tab="generate">Preview &amp; Generate</button>
+        </nav>
+        <div id="gcs-status" class="gcs-status" role="status">Open a project to begin.</div>
+        <section class="gcs-view active" data-gcs-view="catalog">
+          <div class="gcs-toolbar"><input id="gcs-catalog-search" type="search" placeholder="Search gifts"><select id="gcs-catalog-filter"><option value="all">All gifts</option><option value="missing">Missing gift artwork</option></select><button class="btn btn-ghost btn-sm" id="gcs-check-all" type="button">Check all</button><button class="btn btn-primary btn-sm" id="gcs-import-selected">Import selected</button></div>
+          <div id="gcs-catalog-list" class="gcs-catalog-list"></div>
+        </section>
+        <section class="gcs-view" data-gcs-view="editor">
+
+          <div class="gcs-three-col">
+            <aside><h3>Global Card Library</h3><p class="gcs-help-copy">Every imported card lives here and stays editable no matter which page uses it.</p><div id="gcs-card-list" class="gcs-stack"></div></aside>
+            <main><h3>Card Preview</h3><div id="gcs-card-preview" class="gcs-card-preview"></div></main>
+            <aside><div class="gcs-aside-heading"><h3>Layers</h3><span class="gcs-aside-actions"><button class="btn btn-ghost btn-sm" id="gcs-add-gift-icon-layer" type="button" title="Add a gift icon layer (auto-links to the card's gift)"><i class="fa-solid fa-plus"></i> Gift Icon</button><button class="btn btn-ghost btn-sm" id="gcs-add-text-layer" type="button"><i class="fa-solid fa-plus"></i> Text</button></span></div><div id="gcs-layer-list" class="gcs-stack"></div><div id="gcs-layer-controls" class="gcs-controls"></div><input id="gcs-layer-asset-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden></aside>
+          </div>
+        </section>
+        <section class="gcs-view" data-gcs-view="layout">
+          <div class="gcs-composer">
+            <div class="gcs-composer-top">
+              <aside class="gcs-pages-panel">
+                <div class="gcs-section-heading"><div><h3>Overlay Pages</h3><p>Cards are arranged in page order for OBS playback.</p></div><span id="gcs-project-card-total" class="gcs-count-chip">0 cards</span></div>
+                <div id="gcs-page-list" class="gcs-stack"></div>
+                <div class="gcs-page-actions">
+                  <button class="btn btn-primary btn-sm" id="gcs-auto-pages" type="button"><i class="fa-solid fa-wand-magic-sparkles"></i> Auto-build pages</button>
+                  <button class="btn btn-ghost btn-sm" id="gcs-duplicate-page" type="button"><i class="fa-solid fa-copy"></i> Duplicate selected page</button>
+                  <button class="btn btn-ghost btn-sm" id="gcs-add-empty-page" type="button"><i class="fa-solid fa-plus"></i> Add empty page</button>
+                  <button class="btn btn-danger btn-sm" id="gcs-remove-page" type="button"><i class="fa-solid fa-trash"></i> Remove selected page</button>
+                </div>
+                <button id="gcs-add-page" type="button" hidden aria-hidden="true"></button>
+              </aside>
+              <main class="gcs-controls gcs-layout-controls">
+                <div class="gcs-section-heading"><div><h3>Selected Page Layout</h3><p id="gcs-page-card-summary" class="gcs-page-summary">0 cards · 1 slot</p></div></div>
+                <div class="gcs-control-grid"><label>Rows<input id="gcs-grid-rows" type="number" min="1" max="20"></label><label>Columns<input id="gcs-grid-columns" type="number" min="1" max="20"></label><label>Horizontal gap<input id="gcs-gap-x" type="number" min="0"></label><label>Vertical gap<input id="gcs-gap-y" type="number" min="0"></label><label>Page duration (ms)<input id="gcs-page-duration" type="number" min="250"></label><label>Transition<select id="gcs-transition"><option value="none">None</option><option value="fade">Fade</option><option value="slide_left">Slide left</option><option value="pixel_wipe">Pixel wipe</option></select></label></div>
+                <div class="gcs-workflow-note"><i class="fa-solid fa-circle-info"></i><span><strong>Workflow:</strong> Catalog imports into the global Card Library. Edit cards once, then freely assign them below—or use <b>Auto-build pages</b> for instant distribution.</span></div>
+                <div class="gcs-page-assignment">
+                  <div class="gcs-section-heading"><div><h3>Cards on this page</h3><p>Choose exactly which global cards appear here. Cards remain editable from Card Editor.</p></div></div>
+                  <div class="gcs-assignment-columns">
+                    <div><label for="gcs-page-card-search">Available cards <span id="gcs-available-count" class="gcs-count-chip"></span></label><input id="gcs-page-card-search" class="gcs-assign-search" type="search" placeholder="Filter by gift or action…" autocomplete="off"><div id="gcs-page-card-library" class="gcs-assign-list" role="group" aria-label="Available cards"></div><button class="btn btn-primary btn-sm" id="gcs-assign-card" type="button"><i class="fa-solid fa-arrow-right"></i> Add to page</button></div>
+                    <div><label>Assigned cards · display order <span id="gcs-assigned-count" class="gcs-count-chip"></span></label><div id="gcs-page-assigned-cards" class="gcs-assign-list" role="group" aria-label="Assigned cards"></div><div class="gcs-assignment-actions"><button class="btn btn-ghost btn-sm" id="gcs-card-up" type="button">Move up</button><button class="btn btn-ghost btn-sm" id="gcs-card-down" type="button">Move down</button><button class="btn btn-danger btn-sm" id="gcs-unassign-card" type="button"><i class="fa-solid fa-arrow-left"></i> Remove</button></div></div>
+                  </div>
+                </div>
+              </main>
+            </div>
+            <section class="gcs-composer-preview">
+              <div class="gcs-section-heading"><div><h3>All Pages Preview</h3><p>Review the complete overlay sequence. Click any preview to select and edit that page.</p></div><button class="btn btn-primary btn-sm" id="gcs-refresh-previews" type="button"><i class="fa-solid fa-rotate"></i> Refresh preview</button></div>
+              <div id="gcs-all-page-previews" class="gcs-page-preview-grid"></div>
+            </section>
+            <section class="gcs-composer-export">
+              <div class="gcs-section-heading"><div><h3>Export Overlay</h3><p>Generate from the same workspace after the pages look right.</p></div></div>
+              <div class="gcs-layout-export-grid">
+                <div><label>Output folder</label><div class="gcs-folder-row"><input id="gcs-layout-output" readonly placeholder="Choose a folder"><button class="btn btn-ghost btn-sm" id="gcs-layout-choose-folder" type="button">Choose</button></div></div>
+                <label>Format<select id="gcs-layout-format"><option value="png">PNG</option><option value="gif">Animated GIF</option></select></label>
+                <label>PNG mode<select id="gcs-layout-png-mode"><option value="pages">All pages (ZIP)</option><option value="page">Selected page</option><option value="sheet">Contact sheet</option><option value="cards">All cards (ZIP)</option></select></label>
+                <label>Scale<input id="gcs-layout-scale" type="number" min="1" max="4" value="1"></label>
+              </div>
+              <div class="gcs-export-actions"><button class="btn btn-ghost" id="gcs-layout-estimate" type="button">Estimate</button><button class="btn btn-primary" id="gcs-layout-generate" type="button"><i class="fa-solid fa-download"></i> Generate &amp; export</button><button class="btn btn-danger btn-sm" id="gcs-layout-cancel" type="button" hidden>Cancel</button></div>
+              <div id="gcs-layout-estimate-result" class="gcs-note"></div><progress id="gcs-layout-progress" max="100" value="0"></progress><div id="gcs-layout-result" class="gcs-result"></div>
+            </section>
+          </div>
+        </section>
+        <section class="gcs-view" data-gcs-view="generate">
+          <div class="gcs-generate-grid">
+            <main><h3>Final Preview</h3><div id="gcs-preview" class="gcs-preview"><span>Generate to inspect the final artifact.</span></div></main>
+            <aside class="gcs-controls"><h3>Output</h3><div class="gcs-folder-row"><input id="gcs-output-folder" readonly placeholder="Choose a folder"><button class="btn btn-ghost btn-sm" id="gcs-choose-folder">Choose</button></div><label>Format<select id="gcs-format"><option value="png">PNG</option><option value="gif">Animated GIF</option></select></label><div id="gcs-png-settings"><label>PNG mode<select id="gcs-png-mode"><option value="page">Current page</option><option value="sheet">Contact sheet</option><option value="cards">All cards (ZIP)</option></select></label><label>Scale<input id="gcs-scale" type="number" min="1" max="4" value="1"></label></div><div id="gcs-gif-settings" hidden><label>FPS<input id="gcs-fps" type="number" min="1" max="30" value="15"></label><label>Duration (ms)<input id="gcs-duration" type="number" min="100" placeholder="Automatic"></label></div><button class="btn btn-ghost btn-sm" id="gcs-estimate">Estimate</button><div id="gcs-estimate-result" class="gcs-note"></div><button class="btn btn-primary" id="gcs-generate">Generate to folder</button><button class="btn btn-danger btn-sm" id="gcs-cancel" hidden>Cancel</button><progress id="gcs-progress" max="100" value="0"></progress><div id="gcs-result" class="gcs-result"></div></aside>
+          </div>
+        </section>
+      </div>
+    </div>
+
+        <!-- ===== POINTS PANEL ===== -->
+    <div class="panel" id="panel-points">
+      <div class="section-header points-header">
+        <div>
+          <h2><i class="fa-solid fa-coins"></i> Viewer Points</h2>
+          <span class="points-period-label" id="points-period-label">All time</span>
+        </div>
+        <div class="points-header-controls">
+          <input type="text" id="points-search" class="points-search" placeholder="Search name / @username…" autocomplete="off">
+          <select id="points-period" class="points-sort" aria-label="Points period">
+            <option value="all">All time</option>
+            <option value="today">Today</option>
+            <option value="3d">Last 3 days</option>
+            <option value="7d">Last 7 days</option>
+            <option value="custom">Custom period</option>
+          </select>
+          <select id="points-sort" class="points-sort">
+            <option value="coins">Most coins</option>
+            <option value="recent">Most recent</option>
+            <option value="name">Name A–Z</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="points-custom-range" id="points-custom-range" hidden>
+        <label>From <input type="date" id="points-start-date"></label>
+        <label>To <input type="date" id="points-end-date"></label>
+        <button class="btn btn-primary btn-sm" type="button" id="points-apply-period">Apply</button>
+      </div>
+
+      <div class="points-summary" id="points-summary">
+        <div class="points-stat"><i class="fa-solid fa-users"></i><div><span class="stat-num" id="points-total-viewers">0</span><span class="stat-label">Gifters</span></div></div>
+        <div class="points-stat"><i class="fa-solid fa-coins"></i><div><span class="stat-num" id="points-total-coins">0</span><span class="stat-label">Total coins</span></div></div>
+        <div class="points-stat"><i class="fa-solid fa-gift"></i><div><span class="stat-num" id="points-total-gifts">0</span><span class="stat-label">Gifts</span></div></div>
+      </div>
+
+      <div class="points-table-wrap">
+        <table class="points-table">
+          <thead>
+            <tr>
+              <th class="col-avatar">#</th>
+              <th>Viewer</th>
+              <th class="col-username">Username</th>
+              <th class="col-num">Coins</th>
+              <th class="col-num">Gifts</th>
+              <th class="col-activity">Last activity</th>
+            </tr>
+          </thead>
+          <tbody id="points-tbody">
+            <!-- Populated by JS -->
+          </tbody>
+        </table>
+        <div class="points-empty" id="points-empty" style="display:none;">
+          <i class="fa-solid fa-coins"></i>
+          <p>No coin gifts recorded yet.<br><span class="form-hint">Viewer points appear here the moment someone sends a gift.</span></p>
+        </div>
+      </div>
+
+      <div class="points-footer">
+        <button class="btn btn-ghost btn-sm" id="points-prev"><i class="fa-solid fa-chevron-left"></i> Prev</button>
+        <span class="points-page-info" id="points-page-info">—</span>
+        <button class="btn btn-ghost btn-sm" id="points-next">Next <i class="fa-solid fa-chevron-right"></i></button>
       </div>
     </div>
 
@@ -527,6 +778,7 @@
           <div class="overlay-url-bar">
             <input type="text" class="overlay-url-input" id="overlay-url-topshowcase" readonly>
             <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('topshowcase')"><i class="fa-solid fa-copy"></i> Copy URL</button>
+            <button class="btn btn-secondary btn-sm" onclick="openTopGiftLayoutModal()"><i class="fa-solid fa-sliders"></i> Customize</button>
           </div>
         </div>
         <div class="overlay-section-body">
@@ -545,6 +797,7 @@
           <div class="overlay-url-bar">
             <input type="text" class="overlay-url-input" id="overlay-url-topgift" readonly>
             <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('topgift')"><i class="fa-solid fa-copy"></i> Copy URL</button>
+            <button class="btn btn-secondary btn-sm" onclick="openTopGiftLayoutModal()"><i class="fa-solid fa-sliders"></i> Customize</button>
             <button class="btn btn-danger btn-sm" onclick="resetTopGiftOverlay()" title="Reset top gift display"><i class="fa-solid fa-rotate-left"></i> Reset</button>
           </div>
         </div>
@@ -564,6 +817,7 @@
           <div class="overlay-url-bar">
             <input type="text" class="overlay-url-input" id="overlay-url-topstreak" readonly>
             <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('topstreak')"><i class="fa-solid fa-copy"></i> Copy URL</button>
+            <button class="btn btn-secondary btn-sm" onclick="openTopGiftLayoutModal()"><i class="fa-solid fa-sliders"></i> Customize</button>
             <button class="btn btn-danger btn-sm" onclick="resetTopStreakOverlay()" title="Reset top streak display"><i class="fa-solid fa-rotate-left"></i> Reset</button>
           </div>
         </div>
@@ -633,12 +887,30 @@
         </div>
       </div>
 
-      <!-- Top Gifter Podium Overlay -->
+      <!-- Gift Roulette Overlay -->
+      <div class="overlay-section">
+        <div class="overlay-section-header">
+          <div class="overlay-section-title">
+            <div class="overlay-icon" style="background:linear-gradient(135deg,#9C27B0,#7B1FA2);"><i class="fa-solid fa-shuffle"></i></div>
+            <div><h3>Gift Roulette Overlay</h3><p class="form-hint">One-row slot roll — winner's full gift bundle fires at land. Configure in the Roulette tab.</p></div>
+          </div>
+          <div class="overlay-url-bar">
+            <input type="text" class="overlay-url-input" id="overlay-url-roulette" readonly>
+            <button class="btn btn-primary btn-sm" onclick="copyOverlayUrl('roulette')"><i class="fa-solid fa-copy"></i> Copy URL</button>
+          </div>
+        </div>
+        <div class="overlay-section-body">
+          <div class="overlay-preview-frame"><div class="preview-label">LIVE PREVIEW</div><iframe id="preview-roulette" class="overlay-iframe"></iframe></div>
+          <div class="overlay-size-hint">Recommended OBS size: <strong>380 x 110</strong> (hidden while idle)</div>
+        </div>
+      </div>
+
+      <!-- Top Gifter/Liker Leaderboard Overlay -->
       <div class="overlay-section overlay-section-featured">
         <div class="overlay-section-header">
           <div class="overlay-section-title">
             <div class="overlay-icon" style="background:linear-gradient(135deg,#fbbf24,#b87f00);"><i class="fa-solid fa-crown"></i></div>
-            <div><h3>Top Gifter Podium</h3><p class="form-hint">Podium-style ranking of top 3 gifters per stream</p></div>
+            <div><h3>Top Gifter &amp; Liker Leaderboard</h3><p class="form-hint">Rotating top-10 gifters (coins) / likers (likes), resets each new live</p></div>
           </div>
           <div class="overlay-url-bar">
             <input type="text" class="overlay-url-input" id="overlay-url-topgifter" readonly>
@@ -648,7 +920,17 @@
         </div>
         <div class="overlay-section-body">
           <div class="overlay-preview-frame"><div class="preview-label">LIVE PREVIEW</div><iframe id="preview-topgifter" class="overlay-iframe"></iframe></div>
-          <div class="overlay-size-hint">Recommended OBS size: <strong>500 x 420</strong> (bottom-center podium)</div>
+          <div class="overlay-size-hint">Recommended OBS size: <strong>400 x 260</strong> (crop to top 3 rows)</div>
+          <div class="overlay-toggles-row">
+            <label class="song-toggle" style="margin:0;">
+              <input type="checkbox" id="topgifter-show-coins">
+              <span>Show coin amounts</span>
+            </label>
+            <label class="song-toggle" style="margin:0;">
+              <input type="checkbox" id="topgifter-show-likes">
+              <span>Show like amounts</span>
+            </label>
+          </div>
         </div>
       </div>
 
@@ -714,9 +996,9 @@
           </div>
         </div>
 
-        <div id="spotify-credential-warning" class="song-warning" style="display:none;">
-          <i class="fa-solid fa-triangle-exclamation"></i>
-          <span>Configure Spotify Client ID &amp; Secret below before connecting.</span>
+        <div id="spotify-active-device-notice" class="song-warning" style="display:none;">
+          <i class="fa-brands fa-spotify"></i>
+          <span><strong>One more step:</strong> Open Spotify and play any song once. This activates your Spotify device so the bot can run song commands.</span>
         </div>
 
         <div class="song-layout">
@@ -724,8 +1006,8 @@
             <section class="song-card song-card-accent">
               <div class="song-card-header">
                 <div>
-                  <h3><i class="fa-solid fa-terminal"></i> Commands &amp; Spotify</h3>
-                  <p>Editable commands and Spotify developer credentials.</p>
+                  <h3><i class="fa-solid fa-terminal"></i> Song Request Settings</h3>
+                  <p>Connect Spotify once, then configure commands and request limits here.</p>
                 </div>
                 <button class="btn btn-primary btn-sm" id="btn-save-song-config"><i class="fa-solid fa-save"></i> Save Config</button>
               </div>
@@ -742,21 +1024,6 @@
                 <div class="song-mini-field">
                   <span>Revoke</span>
                   <input type="text" id="song-revoke-cmd" value="!revoke" class="form-input">
-                </div>
-              </div>
-
-              <div class="song-form-grid">
-                <div class="form-group">
-                  <label>Spotify Client ID</label>
-                  <input type="text" id="song-client-id" class="form-input" placeholder="From Spotify Developer Dashboard">
-                </div>
-                <div class="form-group">
-                  <label>Spotify Client Secret</label>
-                  <input type="password" id="song-client-secret" class="form-input" placeholder="From Spotify Developer Dashboard">
-                </div>
-                <div class="form-group song-span-2">
-                  <label>Redirect URI</label>
-                  <input type="text" id="song-redirect-uri" class="form-input" placeholder="http://localhost:5000/api/spotify/callback">
                 </div>
               </div>
 
@@ -882,6 +1149,17 @@
                 </div>
                 <button class="btn btn-ghost btn-sm" onclick="clearSongHistory()"><i class="fa-solid fa-trash"></i></button>
               </div>
+              <div class="song-history-filters">
+                <input id="song-history-viewer" class="form-input" type="search" placeholder="Filter viewer…" autocomplete="off">
+                <input id="song-history-date" class="form-input" type="date" aria-label="Played date">
+                <select id="song-history-sort" class="form-input" aria-label="Sort song history">
+                  <option value="newest">Newest</option>
+                  <option value="oldest">Oldest</option>
+                  <option value="viewer">Viewer A–Z</option>
+                  <option value="song">Song A–Z</option>
+                </select>
+              </div>
+              <div id="song-history-count" class="song-history-count">0 songs</div>
               <div id="song-history-container" class="song-list compact">
                 <div class="song-empty small"><span>No history yet.</span></div>
               </div>
@@ -1082,6 +1360,94 @@
   </div>
 </div>
 
+<!-- ===== TOP CARD LAYOUT MODAL ===== -->
+<style>
+  /* Mini Minecraft-toast mockups for the layout picker — mirrors the overlay's
+     achievement-toast skin (gray pixel bevel, Minecraftia, yellow names). */
+  @font-face {
+    font-family: 'Minecraftia';
+    src: url('https://cdn.jsdelivr.net/npm/@south-paw/typeface-minecraft@1.0.0/files/minecraft.woff2') format('woff2'),
+         url('https://cdn.jsdelivr.net/npm/@south-paw/typeface-minecraft@1.0.0/files/minecraft.woff') format('woff');
+    font-display: swap;
+  }
+  .tgl-mock {
+    background: #3a3a3a;
+    padding: 8px 10px;
+    margin: 0 auto 8px;
+    box-shadow: 0 0 0 2px #000, inset 0 0 0 2px #1d1d1d,
+                inset 3px 3px 0 0 #545454, inset -3px -3px 0 0 #2b2b2b;
+    font-family: 'Minecraftia', monospace;
+    image-rendering: pixelated;
+  }
+  .tgl-mock-icon {
+    width: 34px; height: 34px; flex: none;
+    background: #2b2b2b;
+    box-shadow: inset 2px 2px 0 0 #545454, inset -2px -2px 0 0 #1d1d1d;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-style: normal;
+  }
+  .tgl-mock-label { font-size: 8px; color: #ffff55; text-shadow: 1px 1px 0 #3f3f00; white-space: nowrap; }
+  .tgl-mock-name { font-size: 11px; color: #ffff55; text-shadow: 2px 2px 0 #3f3f00; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 92px; }
+  .tgl-mock-row { font-size: 7px; color: #e0e0e0; white-space: nowrap; }
+</style>
+<div class="modal-overlay" id="topgift-layout-modal">
+  <div class="modal-box" style="max-width:480px;">
+    <div class="modal-header">
+      <h3><i class="fa-solid fa-sliders"></i> Customize Top Card Layout</h3>
+      <button class="modal-close" onclick="closeTopGiftLayoutModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:#8b92a5;margin-bottom:16px;">Choose how the Top Gift, Top Streak, and Top Showcase cards display:</p>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:24px;">
+        <label style="cursor:pointer;border:2px solid var(--border-default);border-radius:10px;padding:12px;text-align:center;transition:all .2s;"
+               onclick="selectLayout('left')" data-choice="left">
+          <div style="font-size:11px;font-weight:700;margin-bottom:8px;color:#cbd5e1;">LEFT</div>
+          <div class="tgl-mock" style="display:flex;align-items:center;gap:8px;">
+            <div class="tgl-mock-icon">🎁</div>
+            <div style="min-width:0;text-align:left;line-height:1.35;">
+              <div class="tgl-mock-label">TOP GIFT</div>
+              <div class="tgl-mock-name">Player</div>
+              <div class="tgl-mock-row">Rose · 🪙100</div>
+            </div>
+          </div>
+          <div style="font-size:10px;color:#8b92a5;">Icon Left / Name Right</div>
+        </label>
+
+        <label style="cursor:pointer;border:2px solid var(--border-default);border-radius:10px;padding:12px;text-align:center;transition:all .2s;"
+               onclick="selectLayout('center')" data-choice="center">
+          <div style="font-size:11px;font-weight:700;margin-bottom:8px;color:#cbd5e1;">CENTER</div>
+          <div class="tgl-mock" style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+            <div class="tgl-mock-icon">🎁</div>
+            <div style="min-width:0;text-align:center;line-height:1.35;">
+              <div class="tgl-mock-label">TOP GIFT</div>
+              <div class="tgl-mock-name" style="max-width:none;">Player</div>
+              <div class="tgl-mock-row">Rose · 🪙100</div>
+            </div>
+          </div>
+          <div style="font-size:10px;color:#8b92a5;">Icon Centered / Name Below</div>
+        </label>
+
+        <label style="cursor:pointer;border:2px solid var(--border-default);border-radius:10px;padding:12px;text-align:center;transition:all .2s;"
+               onclick="selectLayout('right')" data-choice="right">
+          <div style="font-size:11px;font-weight:700;margin-bottom:8px;color:#cbd5e1;">RIGHT</div>
+          <div class="tgl-mock" style="display:flex;flex-direction:row-reverse;align-items:center;gap:8px;">
+            <div class="tgl-mock-icon">🎁</div>
+            <div style="min-width:0;text-align:right;line-height:1.35;">
+              <div class="tgl-mock-label">TOP GIFT</div>
+              <div class="tgl-mock-name">Player</div>
+              <div class="tgl-mock-row">🪙100 · Rose</div>
+            </div>
+          </div>
+          <div style="font-size:10px;color:#8b92a5;">Icon Right / Name Left</div>
+        </label>
+      </div>
+
+      <button class="btn btn-primary btn-sm" onclick="saveTopGiftLayout()"><i class="fa-solid fa-check"></i> Apply &amp; Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== GIFT GOAL MODAL ===== -->
 <div class="modal-overlay" id="giftgoal-modal">
   <div class="modal-box" style="max-width:440px;">
@@ -1145,8 +1511,9 @@
     </div>
     <div class="modal-body">
       <div class="form-group" id="available-gifts-group" style="display:none;">
-        <label>Pick a Gift <span style="font-size:11px;font-weight:400;opacity:0.7;">(Click to auto-fill)</span></label>
-        <input type="text" id="gift-search-input" placeholder="Search by gift name or ID..." style="margin-bottom:8px;" autocomplete="off">
+        <div class="gift-picker-heading"><label>Pick a Gift <span style="font-size:11px;font-weight:400;opacity:0.7;">(Click to auto-fill)</span></label><select id="gift-picker-scope" aria-label="Gift catalog scope"><option value="panel">Current room only</option><option value="all">All known gifts</option></select></div>
+        <input type="text" id="gift-search-input" placeholder="Search gifts available in your current TikTok room..." style="margin-bottom:8px;" autocomplete="off">
+        <div id="gift-picker-scope-note" class="gift-picker-scope-note">Showing only gifts TikTok currently offers in your room.</div>
         <div id="available-gifts-list" class="available-gifts-list"></div>
       </div>
       <div class="form-group" id="gift-icon-group" style="display:none;">
@@ -1345,7 +1712,60 @@
   </div>
 </div>
 
+<!-- ===== VIEWER POINTS DETAIL MODAL ===== -->
+<div class="modal-overlay" id="points-viewer-modal">
+  <div class="modal-box" style="max-width:560px;">
+    <div class="modal-header">
+      <h3><i class="fa-solid fa-user-gear"></i> Viewer Coins</h3>
+      <button class="modal-close" onclick="closePointsViewerModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="pv-identity">
+        <span id="pv-avatar" class="pv-avatar-slot"></span>
+        <div class="pv-identity-text">
+          <div class="pv-nick" id="pv-nick">—</div>
+          <div class="pv-username" id="pv-username"></div>
+          <div class="pv-userid" id="pv-userid"></div>
+        </div>
+      </div>
+
+      <div class="pv-stats">
+        <div class="pv-stat"><span class="pv-stat-num" id="pv-coins">0</span><span class="pv-stat-label">Coins</span></div>
+        <div class="pv-stat"><span class="pv-stat-num" id="pv-gifts">0</span><span class="pv-stat-label">Gifts</span></div>
+        <div class="pv-stat"><span class="pv-stat-num" id="pv-first-seen">—</span><span class="pv-stat-label">First seen</span></div>
+        <div class="pv-stat"><span class="pv-stat-num" id="pv-last-gift">—</span><span class="pv-stat-label">Last activity</span></div>
+      </div>
+
+      <div class="form-group">
+        <label>Adjust Coins <span style="font-size:11px;font-weight:400;opacity:0.7;">(for gifts the app missed)</span></label>
+        <div class="pv-adjust-row">
+          <input type="number" id="pv-adjust-amount" placeholder="Coins" min="0" step="1">
+          <button class="btn btn-secondary btn-sm" type="button" onclick="adjustViewerCoins('add')" title="Add this many coins"><i class="fa-solid fa-plus"></i> Add</button>
+          <button class="btn btn-secondary btn-sm" type="button" onclick="adjustViewerCoins('remove')" title="Remove this many coins"><i class="fa-solid fa-minus"></i> Remove</button>
+          <button class="btn btn-secondary btn-sm" type="button" onclick="adjustViewerCoins('set')" title="Set the exact total"><i class="fa-solid fa-check"></i> Set</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Note <span style="font-size:11px;font-weight:400;opacity:0.7;">(optional, saved in history)</span></label>
+        <input type="text" id="pv-adjust-note" placeholder="e.g. app crashed during Lion gift" maxlength="120">
+      </div>
+
+      <div class="form-group" style="margin-bottom:0;">
+        <label>Recent History</label>
+        <div class="pv-history" id="pv-history"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <div style="flex:1;"></div>
+      <button class="btn btn-ghost btn-sm" onclick="closePointsViewerModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <script src="/static/overlay_previews.js?v=1"></script>
-<script src="/static/script.js?v=29"></script>
+<script src="/static/points_period.js?v=1"></script>
+<script src="/static/song_history_filters.js?v=1"></script>
+<script src="/static/script.js?v=53"></script>
 </body>
 </html>

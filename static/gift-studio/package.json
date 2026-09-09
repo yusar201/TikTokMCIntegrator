@@ -1,0 +1,6 @@
+{
+  "name": "gift-studio-modules",
+  "private": true,
+  "type": "module",
+  "//": "Scopes these ES modules for Node (node --test / node --check). Browser loading is unaffected: index.html imports them via <script type=\"module\">."
+}

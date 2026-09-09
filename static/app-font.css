@@ -1,0 +1,47 @@
+@font-face {
+  font-family: 'Chakra Petch';
+  src: url('/static/fonts/ChakraPetch-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Chakra Petch';
+  src: url('/static/fonts/ChakraPetch-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Chakra Petch';
+  src: url('/static/fonts/ChakraPetch-SemiBold.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Chakra Petch';
+  src: url('/static/fonts/ChakraPetch-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+html,
+body,
+button,
+input,
+select,
+textarea,
+optgroup,
+option {
+  font-family: 'Chakra Petch', 'Segoe UI', sans-serif;
+}
+
+input::placeholder,
+textarea::placeholder {
+  font-family: 'Chakra Petch', 'Segoe UI', sans-serif;
+}
