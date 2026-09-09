@@ -1784,15 +1784,21 @@ body[data-tslayout="right"] .ts-card .ts-gift-row { justify-content: flex-end !i
   background: #1d1f24;
   border: 3px solid #3a3d44;
   border-radius: 0;
-  /* Pixel-cut corners (house pattern): 45° corner cuts instead of 90° edges
-     or smooth rounding. clip-path clips the border into the chamfered shape;
-     the outer drop shadow becomes a filter since box-shadow would be clipped.
-     Inset ring survives clipping. Fixed geometry unchanged. */
+  /* Stepped pixel corners (frozen-hands pattern): two 4px staircase steps per
+     corner instead of a straight chamfer. clip-path clips the border into the
+     stepped shape; the outer drop shadow becomes a filter since box-shadow
+     would be clipped. Inset ring survives clipping. Fixed geometry unchanged. */
   clip-path: polygon(
-    6px 0, calc(100% - 6px) 0,
-    100% 6px, 100% calc(100% - 6px),
-    calc(100% - 6px) 100%, 6px 100%,
-    0 calc(100% - 6px), 0 6px
+    8px 0, calc(100% - 8px) 0,
+    calc(100% - 8px) 4px, calc(100% - 4px) 4px, calc(100% - 4px) 8px, 100% 8px,
+    100% calc(100% - 8px),
+    calc(100% - 4px) calc(100% - 8px), calc(100% - 4px) calc(100% - 4px), calc(100% - 8px) calc(100% - 4px),
+    calc(100% - 8px) 100%,
+    8px 100%,
+    8px calc(100% - 4px), 4px calc(100% - 4px), 4px calc(100% - 8px),
+    0 calc(100% - 8px),
+    0 8px,
+    4px 8px, 4px 4px, 8px 4px
   );
   box-shadow: inset 0 0 0 2px #101114;
   filter: drop-shadow(4px 4px 0 rgba(0,0,0,.55));
@@ -1832,11 +1838,18 @@ body[data-tslayout="right"] .ts-card .ts-gift-row { justify-content: flex-end !i
   background: #101114;
   border: 2px solid #2a2d33;
   border-radius: 0;
+  /* Stepped pixel corners, half-scale frozen-hands (two 2px steps). */
   clip-path: polygon(
     4px 0, calc(100% - 4px) 0,
-    100% 4px, 100% calc(100% - 4px),
-    calc(100% - 4px) 100%, 4px 100%,
-    0 calc(100% - 4px), 0 4px
+    calc(100% - 4px) 2px, calc(100% - 2px) 2px, calc(100% - 2px) 4px, 100% 4px,
+    100% calc(100% - 4px),
+    calc(100% - 2px) calc(100% - 4px), calc(100% - 2px) calc(100% - 2px), calc(100% - 4px) calc(100% - 2px),
+    calc(100% - 4px) 100%,
+    4px 100%,
+    4px calc(100% - 2px), 2px calc(100% - 2px), 2px calc(100% - 4px),
+    0 calc(100% - 4px),
+    0 4px,
+    2px 4px, 2px 2px, 4px 2px
   );
   box-shadow: inset 2px 2px 0 rgba(0,0,0,.6);
 }
