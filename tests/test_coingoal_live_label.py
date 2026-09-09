@@ -33,5 +33,6 @@ def test_coin_goal_overlay_fetches_fresh_state_each_poll():
     html = dashboard.app.test_client().get("/overlay/coingoal").get_data(as_text=True)
 
     assert "? url + (url.includes('?') ? '&' : '?') + '_=' + Date.now()" in html
-    assert "fetch(requestUrl, TYPE === 'coingoal' ? { cache: 'no-store' } : undefined)" in html
+    # Roulette shares the no-store fetch path, so the condition now lists both types.
+    assert "TYPE === 'coingoal'" in html and "{ cache: 'no-store' }" in html
     assert "labelEl.innerText = cgState.label" in html
