@@ -4101,10 +4101,17 @@ function rlTick() {
   osc.stop(t + 0.05);
 }
 
-function rlChime() {
-  // Win chime: two-note rising blip + soft sparkle.
+async function rlChime() {
+  // Win chime: rising three-note blip. Doubles as the autoplay detector: if
+  // the context still isn't running at land time, this tab blocked audio.
   const ctx = rlAudio();
   if (!ctx) return;
+  if (ctx.state !== 'running') {
+    try {
+      await Promise.race([ctx.resume(), new Promise(r => setTimeout(r, 250))]);
+    } catch (e) { /* ignore */ }
+    if (ctx.state !== 'running') { rlShowAudioHint(); return; }
+  }
   const t0 = ctx.currentTime;
   [[523.25, 0.0, 0.14], [783.99, 0.09, 0.16], [1046.5, 0.18, 0.22]].forEach(([freq, dt, dur]) => {
     const osc = ctx.createOscillator();
@@ -4148,6 +4155,27 @@ function rlStartTicks(durationMs, rowCount) {
 function rlStopTicks() {
   if (rlTickTimer) { cancelAnimationFrame(rlTickTimer); rlTickTimer = null; }
   rlLastTickRow = -1;
+}
+
+// Autoplay unlock: browsers suspend AudioContext until a user gesture. OBS
+// browser sources allow autoplay, but a plain tab needs one interaction —
+// arm the unlock listeners once; they stay for the page's lifetime.
+let rlAudioHintShown = false;
+function rlUnlockAudio() {
+  const ctx = rlAudioCtx || rlAudio();
+  if (ctx && ctx.state === 'suspended') ctx.resume();
+}
+['pointerdown', 'keydown'].forEach(evt =>
+  window.addEventListener(evt, rlUnlockAudio, { once: false, passive: true })
+);
+
+// A blocked context can't sound; surface it in the existing trigger slot so
+// the card's fixed geometry never changes.
+function rlShowAudioHint() {
+  if (rlAudioHintShown) return;
+  rlAudioHintShown = true;
+  const trigger = document.getElementById('rl-trigger');
+  if (trigger) trigger.textContent = '🔇 click overlay once for sound';
 }
 
 function rlStartSpin(data) {

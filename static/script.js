@@ -5362,11 +5362,52 @@ async function testRouletteSpin() {
   }
 }
 
+// ── Slot sound preview (same synth as the overlay) ──
+function playRouletteSoundPreview() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) { showToast('Web Audio not available', 'error'); return; }
+  const ctx = new AC();
+  const play = () => {
+    // Roll ticks: 14 clicks decelerating (mimics the reel easing).
+    let delay = 0;
+    for (let i = 0; i < 14; i++) {
+      const t = ctx.currentTime + delay;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(1900 + Math.random() * 500, t);
+      gain.gain.setValueAtTime(0.06, t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.045);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t); osc.stop(t + 0.05);
+      delay += 0.045 + 0.11 * Math.pow(i / 13, 1.8);
+    }
+    // Land chime after the roll.
+    const t0 = ctx.currentTime + delay + 0.12;
+    [[523.25, 0.0, 0.14], [783.99, 0.09, 0.16], [1046.5, 0.18, 0.22]].forEach(([freq, dt, dur]) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, t0 + dt);
+      gain.gain.setValueAtTime(0.0001, t0 + dt);
+      gain.gain.exponentialRampToValueAtTime(0.12, t0 + dt + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + dur);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t0 + dt); osc.stop(t0 + dt + dur + 0.05);
+    });
+    setTimeout(() => ctx.close(), (delay + 0.8) * 1000);
+  };
+  // Click on the button IS a user gesture — resume then play.
+  if (ctx.state === 'suspended') ctx.resume().then(play); else play();
+}
+
 // Bind roulette controls once DOM is ready.
 document.addEventListener('DOMContentLoaded', () => {
   const save = document.getElementById('btn-roulette-save');
   const test = document.getElementById('btn-roulette-test');
   const add = document.getElementById('btn-roulette-add');
+  const sound = document.getElementById('btn-roulette-sound');
+  if (sound) sound.onclick = playRouletteSoundPreview;
   if (save) save.onclick = saveRouletteConfig;
   if (test) test.onclick = testRouletteSpin;
   if (add) add.onclick = () => {
