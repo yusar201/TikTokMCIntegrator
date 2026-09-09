@@ -31,14 +31,22 @@ from TikTokLive.client.web.web_settings import WebDefaults
 from TikTokLive.events import ConnectEvent, CommentEvent, LikeEvent, GiftEvent, FollowEvent, SubNotifyEvent, DisconnectEvent, RoomUserSeqEvent, BarrageEvent, EnvelopeEvent, JoinEvent, LiveEndEvent
 from TikTokLive.events.custom_events import SuperFanEvent, SuperFanJoinEvent, SuperFanBoxEvent, UnknownEvent, WebsocketResponseEvent
 from mcrcon import MCRcon
-from actions import migrate_config_actions, migrate_custom_events_actions, migrate_to_events_redesign, execute_actions, build_context
+from actions import migrate_config_actions, migrate_custom_events_actions, migrate_to_events_redesign, execute_actions as _orig_execute_actions, build_context
 from event_registry import EVENT_REGISTRY, get_event_class
+import gift_roulette
 from gift_delta import GiftDeltaTracker
+import gift_catalog
+import gift_catalog_sync
+import gift_catalog_backfill
+import bot_flags
 import spotify_handler as sh
 from utils import load_json, save_json
 from constants import *
+from sim_console_log import append_line as append_sim_console_line
+import bot_status
 
-# Monkey-patch TikTokLive v7.0.0a1 bug: _get_all_badge_info() was written for v2
+# Monkey-patch TikTokLive v7 badge bug (still present in 7.0.0b2):
+# _get_all_badge_info() was written for v2
 # schema but v3 Schema V3 renamed everything in BadgeStruct:
 #   badges → badge_list, badge_scene → scene_type (enum), log_extra → privilege_log_extra
 # Without this, member_level, gifter_level, is_moderator, is_top_gifter all return None.
@@ -154,6 +162,32 @@ def _is_debug_mode_enabled() -> bool:
         pass
     return False
 
+def _is_log_only_mode_enabled() -> bool:
+    """Live-read Settings.LogOnlyMode from config.yml. Default: False.
+
+    When ON, ALL events fire and are logged exactly as normal, but NO actions
+    execute (no Minecraft commands, no sounds, no webhooks, no overlays).
+    The dashboard shows \"DEBUG MODE\" to indicate this mode.
+    """
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                c = yaml.safe_load(f) or {}
+            return bool(c.get("Settings", {}).get("LogOnlyMode", False))
+    except Exception:
+        pass
+    return False
+
+def _should_skip_action_execution() -> bool:
+    """Return True if LogOnlyMode is ON."""
+    return _is_log_only_mode_enabled()
+
+
+async def execute_actions(actions, context=None, send_mc_command=None):
+    """Execute a list of actions in order — skip everything if LogOnlyMode is ON."""
+    if _should_skip_action_execution():
+        return  # Skip execution entirely; events already log what was skipped
+    return await _orig_execute_actions(actions, context, send_mc_command)
 
 if _is_debug_mode_enabled():
     try:
@@ -190,6 +224,73 @@ def _is_gift_downloader_enabled() -> bool:
         pass
     return False
 
+
+# Gift catalog region sync (default ON): unions EulerStream's per-region gift
+# panels into available_gifts.json so region-locked gifts get a name, price and
+# icon in the dashboard. Read per call so the UI toggle applies without a
+# restart, matching the project rule for live settings.
+def _is_gift_region_sync_enabled() -> bool:
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                c = yaml.safe_load(f) or {}
+            return bool(c.get("Settings", {}).get("GiftCatalogRegionSync", True))
+    except Exception:
+        pass
+    return True
+
+
+def _current_euler_api_key() -> str:
+    """Euler key read live, so a key pasted into the UI works without restart."""
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                c = yaml.safe_load(f) or {}
+            return str(c.get("Settings", {}).get("EulerApiKey", "") or "")
+    except Exception:
+        pass
+    return EULER_API_KEY
+
+
+def _sync_gift_regions_once():
+    """Blocking region + full-catalog sync; always called via asyncio.to_thread."""
+    try:
+        path = paths.data("available_gifts.json")
+        key = _current_euler_api_key()
+
+        regions = gift_catalog_sync.sync_regions(path, key)
+        if regions.get("error"):
+            print(f"[GIFT-CATALOG] Region sync skipped: {regions['error']}")
+        else:
+            print(
+                f"[GIFT-CATALOG] Region sync: {regions['regions_ok']} regions ok, "
+                f"{regions['regions_failed']} failed (+{regions['added']} new, "
+                f"{regions['updated']} updated)"
+            )
+
+        catalog = gift_catalog_sync.sync_euler_catalog(path, key)
+        if catalog.get("error"):
+            print(f"[GIFT-CATALOG] Full catalog sync: {catalog['error']}")
+        else:
+            print(
+                f"[GIFT-CATALOG] Full catalog: {catalog['fetched']} rows over "
+                f"{catalog['pages']} pages (+{catalog['added']} new, "
+                f"{catalog['updated']} updated)"
+            )
+
+        history = gift_catalog_backfill.backfill_all(
+            path, paths.data("gift_log.json"), paths.data("points.db")
+        )
+        if history["added"] or history["updated"]:
+            print(
+                f"[GIFT-CATALOG] History backfill: +{history['added']} new, "
+                f"{history['updated']} updated"
+            )
+
+        print(f"[GIFT-CATALOG] Catalog now holds {len(gift_catalog.load_catalog(path))} gifts")
+    except Exception as e:
+        print(f"[GIFT-CATALOG] Catalog sync failed: {e}")
+
 # Extract Data
 VIP_LIST = set(config.get("VIP_List", []))
 GIFTS_WITH_STREAK_DELTA = set(config.get("StreakDeltaGifts", []))
@@ -207,6 +308,18 @@ config = migrate_custom_events_actions(config)
 config = migrate_to_events_redesign(config)
 
 GIFT_ACTIONS = config.get("Gifts", {})
+
+# Gift Roulette — normalized config snapshot (plan: .hermes/plans/roulette-randomizer.md).
+# Never parsed per gift event: re-normalized only at startup and on hot-reload,
+# exactly like GIFT_ACTIONS. Saving in the dashboard applies live via signal_reload.
+ROULETTE_CONFIG = gift_roulette.normalize_config(config.get("Roulette"))
+# Stale spinning state from a prior process is cancelled, never replayed.
+ROULETTE_RUNTIME = gift_roulette.RouletteRuntime(paths.data("roulette_state.json"))
+try:
+    if ROULETTE_RUNTIME.sweep_stale():
+        print("[ROULETTE] Cancelled stale spinning state from a prior process.")
+except Exception as rl_err:
+    print(f"[ROULETTE] Stale-state sweep failed: {rl_err}")
 
 # Skip cooldown to prevent double-skips
 _last_skip_time = 0
@@ -233,8 +346,10 @@ def _make_dynamic_handler(event_key, reg_entry):
             # Events can be a dict (Like event with mode/interval/actions) or a list
             if isinstance(actions, dict):
                 actions = actions.get("actions", [])
-            if actions:
+            if actions and not _should_skip_action_execution():
                 await execute_actions(actions, ctx, send_minecraft_command)
+            elif actions and _should_skip_action_execution():
+                print(f"[LOG-ONLY] Skipping execution of {len(actions)} action(s) for {event_key}")
         except Exception as e:
             print(f"[DYNAMIC] Error in {event_key} handler: {e}")
     return handler
@@ -290,7 +405,7 @@ def register_dynamic_events():
 # Hot-reloadable globals (re-read from config on signal)
 def reload_config():
     """Hot-reload config changes without restarting the bot. Only non-critical settings."""
-    global VIP_LIST, GIFTS_WITH_STREAK_DELTA, GIFT_ACTIONS, EVENTS, GLOBAL_COMMANDS, CUSTOM_EVENTS, CHAT_FILTER, CHAT_FILTER_MIN_GIFTER_LEVEL, CHAT_FILTER_MIN_MEMBER_LEVEL
+    global VIP_LIST, GIFTS_WITH_STREAK_DELTA, GIFT_ACTIONS, EVENTS, GLOBAL_COMMANDS, CUSTOM_EVENTS, CHAT_FILTER, CHAT_FILTER_MIN_GIFTER_LEVEL, CHAT_FILTER_MIN_MEMBER_LEVEL, ROULETTE_CONFIG
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
@@ -304,6 +419,7 @@ def reload_config():
         config = migrate_custom_events_actions(config)
         config = migrate_to_events_redesign(config)
         GIFT_ACTIONS = config.get("Gifts", {})
+        ROULETTE_CONFIG = gift_roulette.normalize_config(config.get("Roulette"))
         EVENTS = config.get("Events", {})
         GLOBAL_COMMANDS = config.get("GlobalCommands", {})
         CUSTOM_EVENTS = config.get("CustomEvents", {})
@@ -326,6 +442,8 @@ async def config_watcher():
 
 # Initialize Client
 client: TikTokLiveClient = TikTokLiveClient(unique_id=TIKTOK_USERNAME)
+from reconnect_diagnostics import install_http_response_capture
+install_http_response_capture(client.web.httpx_client)
 WebDefaults.tiktok_sign_api_key = EULER_API_KEY
 # 2026-06-09 EulerStream notice: /webcast/anchors/{unique_id}/room_id and
 # /webcast/bulk_live_check temporarily broken on primary host; legacy host works.
@@ -349,8 +467,7 @@ def _sim_console_push(line: str) -> None:
     # Also write to a file the dashboard can read without importing us
     try:
         log_path = paths.logs("sim_console.log")
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(entry + "\n")
+        append_sim_console_line(log_path, entry)
     except Exception:
         pass
 
@@ -526,15 +643,35 @@ def mc_safe(s: str) -> str:
     return s
 
 def get_gift_icon(gift_id):
-    """Lookup gift icon URL from available_gifts.json cache."""
+    """Lookup gift icon URL from the union-merged available_gifts.json cache."""
     try:
-        gifts = load_json(paths.data("available_gifts.json"), [])
-        for g in gifts:
-            if str(g.get("id")) == str(gift_id):
-                return g.get("icon", "")
+        return gift_catalog.icon_for(paths.data("available_gifts.json"), gift_id)
     except Exception:
-        pass
-    return ""
+        return ""
+
+
+def learn_gift_from_event(gift, gift_id, gift_name, diamond_count):
+    """Teach the catalog a gift straight off a live GiftEvent.
+
+    TikTok's /gift/list/ only returns the room panel (verified: 701 of 2783
+    gifts, is_full_gift_data=False), so creator/event-exclusive gifts such as
+    Super GG (12988) and KhitoFam (938882) are in NO catalog anywhere — the
+    GiftEvent itself is the only place their icon and price ever appear. Without
+    this, those gifts render with a blank icon forever.
+    """
+    try:
+        icon_url = _image_url_from_model(getattr(gift, "icon", None)) \
+            or _image_url_from_model(getattr(gift, "image", None))
+        if gift_catalog.learn_gift(
+            paths.data("available_gifts.json"),
+            gift_id=gift_id,
+            name=gift_name,
+            diamond_count=diamond_count,
+            icon_url=icon_url,
+        ):
+            print(f"[GIFT-CATALOG] Learned '{gift_name}' (id={gift_id}, {diamond_count} coins) from live event")
+    except Exception as e:
+        print(f"[GIFT-CATALOG] Could not learn gift {gift_id}: {e}")
 
 def get_gift_tier(total_coins):
     """Calculate visual tier based on total coin value."""
@@ -731,12 +868,13 @@ def append_superfan_log(nick, event_type="new_superfan", unique_id="", avatar_ur
     except Exception as e:
         print(f"Error writing superfan log: {e}")
 
-# EVENT HANDLERS (v7 — TikTokLive 7.0.0a1)
+# EVENT HANDLERS (v7 — TikTokLive 7.0.0b2)
 # ==========================================
 
 @client.on(ConnectEvent)
 async def on_connect(event: ConnectEvent):
     print(f"Connected to @{event.unique_id} (Room ID: {client.room_id})")
+    bot_status.write_status(paths, "connected", room_id=str(client.room_id or ""), username=event.unique_id)
 
     # Check if this is a reconnect to the same stream
     is_reconnect = False
@@ -766,11 +904,31 @@ async def on_connect(event: ConnectEvent):
 
         # Clear stale viewer stats from previous session
         save_json(paths.data("viewer_stats.json"), {"viewers": 0, "total_viewers": 0, "updated_at": asyncio.get_event_loop().time()})
+
+        # Fresh live -> clear the Top Gifters / Top Likers leaderboards.
+        try:
+            stream_ranking.reset(GIFTER_RANKING_FILE)
+            stream_ranking.reset(LIKER_RANKING_FILE)
+        except Exception:
+            pass
     else:
         # Reconnect — load preserved on-disk entries into the buffers so the
         # flush thread doesn't overwrite them with an empty array.
         for log_file in ["gift_log.json", "follow_log.json", "chat_log.json", "superfan_log.json"]:
             _buffer_init(paths.data(log_file), [])
+        # Reconnect -> reload the leaderboards preserved on disk.
+        try:
+            stream_ranking.init_from_disk(GIFTER_RANKING_FILE)
+            stream_ranking.init_from_disk(LIKER_RANKING_FILE)
+        except Exception:
+            pass
+
+    # Baseline any leftover manual-reset token from a previous live so it
+    # doesn't wipe this live's first entries.
+    try:
+        stream_ranking.ack_reset_token()
+    except Exception:
+        pass
 
     # Write stream state for report generation
     stream_state = {
@@ -786,38 +944,48 @@ async def on_connect(event: ConnectEvent):
     # Register any dynamic custom events from config
     register_dynamic_events()
 
-    # Dump available gifts for the UI
+    # Merge the room's gift panel into the union catalog for the UI.
+    #
+    # TikTok's panel is NOT the full catalog: it self-reports
+    # is_full_gift_data=False and returned 701 of the 2783 known gifts on
+    # Khito's room (verified 2026-09-02). The old code overwrote
+    # available_gifts.json wholesale here, which deleted every gift the app had
+    # learned from live events or a region sync. Merge, never replace.
     try:
         if hasattr(client, "gift_info") and isinstance(client.gift_info, dict) and "gifts" in client.gift_info:
-            gifts_list = []
-
-            for gift in client.gift_info["gifts"]:
-                icon_url = ""
-                # Try to extract the icon from the raw JSON dictionary structure
-                if "icon" in gift and "url_list" in gift["icon"] and len(gift["icon"]["url_list"]) > 0:
-                    icon_url = gift["icon"]["url_list"][0]
-                elif "image" in gift and "url_list" in gift["image"] and len(gift["image"]["url_list"]) > 0:
-                    icon_url = gift["image"]["url_list"][0]
-
-                gifts_list.append({
-                    "id": gift.get("id", 0),
-                    "name": str(gift.get("name", "Unknown")).lower(),
-                    "diamond_count": gift.get("diamond_count", 0),
-                    "icon": icon_url
-                })
-
-            # Sort gifts by diamond count
-            gifts_list.sort(key=lambda x: x["diamond_count"])
-
-            with open(paths.data("available_gifts.json"), "w", encoding="utf-8") as f:
-                json.dump(gifts_list, f, indent=2)
-            print(f"Dumped {len(gifts_list)} available gifts to JSON for UI.")
+            panel = client.gift_info["gifts"]
+            stats = gift_catalog.merge_into_catalog(
+                paths.data("available_gifts.json"), panel, source="panel"
+            )
+            # Re-evaluate panel truth against THIS fetch: gifts that rotated out
+            # of TikTok's panel lose in_panel (they stay in the full catalog and
+            # stay 'seen' if ever received). Keeps the room-scope picker honest.
+            flipped = gift_catalog.mark_panel_gifts(
+                paths.data("available_gifts.json"),
+                [g.get("id") for g in panel if isinstance(g, dict) and g.get("id")],
+            )
+            total = len(gift_catalog.load_catalog(paths.data("available_gifts.json")))
+            print(
+                f"[GIFT-CATALOG] Room panel: {len(panel)} gifts "
+                f"(+{stats['added']} new, {stats['updated']} updated, "
+                f"{flipped} panel flags changed) -> catalog now {total}"
+            )
     except Exception as e:
-        print(f"Error dumping gifts to JSON: {e}")
+        print(f"Error merging room gift panel into catalog: {e}")
+
+    # Region sync backfills gifts TikTok hides from this room's panel — e.g.
+    # Game Controller (6581/7569, 100 coins) exists in the US panel but not
+    # Indonesia's. Runs off-loop so it never delays the connect path.
+    try:
+        if _is_gift_region_sync_enabled():
+            asyncio.create_task(asyncio.to_thread(_sync_gift_regions_once))
+    except Exception as e:
+        print(f"[GIFT-CATALOG] Could not start region sync: {e}")
 
 @client.on(DisconnectEvent)
 async def on_disconnect(event: DisconnectEvent):
     print(f"Disconnected. Room ID was: {client.room_id or 'N/A'}")
+    bot_status.write_status(paths, "disconnected", room_id=str(client.room_id or ""))
     # Flush any buffered events to disk immediately so nothing is lost on a drop.
     try:
         _flush_buffers_once()
@@ -834,8 +1002,14 @@ async def on_live_end(event: LiveEndEvent):
     global _stream_ended_cleanly
     _stream_ended_cleanly = True
     print("Live ended by streamer. Bot will stop (no reconnect).", flush=True)
+    bot_status.write_status(paths, "ended", room_id=str(client.room_id or ""))
     try:
         _flush_buffers_once()
+    except Exception:
+        pass
+    try:
+        # Persist final leaderboard state (likes flush at most 1x/sec in-memory).
+        stream_ranking.flush_all()
     except Exception:
         pass
     streak_tracker.clear()
@@ -861,6 +1035,28 @@ streak_tracker = GiftDeltaTracker(ended_ttl_seconds=30)
 # File write lock — prevents race conditions on JSON logs
 import threading as _threading
 _log_lock = _threading.Lock()
+
+
+def _active_profile_name() -> str:
+    """Active profile name for Roulette state tagging (diagnostics only)."""
+    try:
+        return (paths.config("active_profile.txt") and open(
+            paths.config("active_profile.txt"), "r", encoding="utf-8"
+        ).read().strip()) or "default"
+    except Exception:
+        return "default"
+
+
+def _log_roulette_task_done(task) -> None:
+    """Surface unexpected background spin-task crashes without raising."""
+    try:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            print(f"[ROULETTE] Spin task failed: {exc}")
+    except Exception:
+        pass
 
 
 def safe_json_write(data, log_file, retries=3, delay=0.05):
@@ -974,21 +1170,37 @@ def _start_log_flusher():
 
 # Active streaks tracking (key: group_id, value: streak info dict)
 active_streaks = {}
+_active_streaks_snapshot_version = 0
+_active_streaks_persisted_version = -1
 
-def save_active_streaks():
-    """Write active_streaks dict to JSON for the dashboard API."""
+
+def snapshot_active_streaks():
+    """Create an event-loop-owned snapshot for background persistence."""
+    global _active_streaks_snapshot_version
+    import time
+    now = time.time()
+    stale = [gid for gid, streak in active_streaks.items()
+             if now - streak.get("last_updated", 0) > 30]
+    for gid in stale:
+        del active_streaks[gid]
+    if stale:
+        print(f"[STREAKS] Removed {len(stale)} stale streak(s)")
+    _active_streaks_snapshot_version += 1
+    return (
+        {gid: dict(streak) for gid, streak in active_streaks.items()},
+        _active_streaks_snapshot_version,
+    )
+
+
+def save_active_streaks(snapshot, version):
+    """Persist one immutable snapshot without allowing stale worker overwrite."""
+    global _active_streaks_persisted_version
     try:
         with _log_lock:
-            # Filter out stale streaks (no update in 30 seconds)
-            import time
-            now = time.time()
-            stale = [gid for gid, s in active_streaks.items()
-                     if now - s.get("last_updated", 0) > 30]
-            for gid in stale:
-                del active_streaks[gid]
-            if stale:
-                print(f"[STREAKS] Removed {len(stale)} stale streak(s)")
-            safe_json_write(active_streaks, paths.data("active_streaks.json"))
+            if version <= _active_streaks_persisted_version:
+                return
+            safe_json_write(snapshot, paths.data("active_streaks.json"))
+            _active_streaks_persisted_version = version
     except Exception as e:
         print(f"Error writing active streaks: {e}")
 
@@ -1082,11 +1294,15 @@ def add_to_gift_goal(gift_id, repeat_count, asset_url=""):
         print(f"Error updating gift goal: {e}")
 
 # ==========================================
-# GIFTER RANKING (top 3 podium overlay)
+# TOP GIFTERS / TOP LIKERS LEADERBOARDS (rotating list overlay)
 # ==========================================
-# Maintains a running total of coins per gifter across the stream.
-# Updated on each completed gift event; consumed by /api/stats/topgifter.
-GIFTER_RANKING_FILE = paths.data("gifter_ranking.json")
+# Per-stream leaderboards maintained in memory and flushed to JSON
+# (throttled for bursty likes). Both reset on every fresh live via
+# on_connect; consumed by /api/stats/topgifter. See stream_ranking.py.
+import stream_ranking
+
+GIFTER_RANKING_FILE = stream_ranking.GIFTER_RANKING_FILE
+LIKER_RANKING_FILE = stream_ranking.LIKER_RANKING_FILE
 AVATAR_CACHE_FILE = paths.data("avatar_cache.json")
 
 
@@ -1116,6 +1332,32 @@ def _user_unique_id(user) -> str:
     if not user:
         return ""
     for attr in ("unique_id", "uniqueId", "sec_uid", "secUid", "user_id", "id"):
+        try:
+            value = getattr(user, attr, "")
+            if value:
+                return str(value).strip().lower()
+        except Exception:
+            pass
+    return ""
+
+
+def _user_permanent_id(user) -> str:
+    """TikTok's PERMANENT numeric user id — never changes across renames.
+
+    This is the correct long-term identity key for the points database.
+    Falls back to unique_id (changeable @handle) only when the numeric id
+    is missing, and to '' when nothing is available.
+    """
+    if not user:
+        return ""
+    for attr in ("id", "id_str"):
+        try:
+            value = getattr(user, attr, None)
+            if value not in (None, "", 0):
+                return str(value).strip()
+        except Exception:
+            pass
+    for attr in ("unique_id", "uniqueId"):
         try:
             value = getattr(user, attr, "")
             if value:
@@ -1167,6 +1409,24 @@ def _cache_avatar_url(nick: str, unique_id: str, avatar_url: str) -> str:
         keys = {_avatar_cache_key(nick, unique_id)}
         if nick:
             keys.add(_avatar_cache_key(nick, ""))
+
+        # Short-circuit: likes fire in bursts and resolve_avatar_url() is called
+        # on every like event. If every target key already holds this exact
+        # stable URL, skip the disk rewrite entirely — otherwise a busy stream
+        # hammers avatar_cache.json on every tap.
+        already_cached = True
+        for key in keys:
+            existing = cache.get(key)
+            if isinstance(existing, dict):
+                if existing.get("avatar_url") != stable_url:
+                    already_cached = False
+                    break
+            elif existing != stable_url:
+                already_cached = False
+                break
+        if already_cached:
+            return stable_url
+
         for key in keys:
             cache[key] = {
                 "nick": nick or "",
@@ -1208,43 +1468,37 @@ def resolve_avatar_url(user=None, nick: str = "", unique_id: str = "") -> str:
 
 
 def update_gifter_ranking(nick, avatar_url, total_coins, unique_id=""):
-    """Accumulate coins per gifter, keep top 10 sorted by total_coins desc."""
+    """Accumulate coins per gifter for the current live (top 10 served).
+
+    Thin wrapper over stream_ranking — the gifter board resets on every
+    fresh live; see on_connect. Gifts are rare, so writes are immediate.
+    """
     try:
-        ranking = load_json(GIFTER_RANKING_FILE, [])
-        if not isinstance(ranking, list):
-            ranking = []
-
         avatar_url = avatar_url or _cached_avatar_url(nick, unique_id)
-        target_key = _avatar_cache_key(nick, unique_id)
-
-        found = False
-        for entry in ranking:
-            entry_key = _avatar_cache_key(entry.get("nick", ""), entry.get("unique_id", ""))
-            # Backward compatible match for older ranking entries that only stored nick.
-            if entry_key == target_key or (not unique_id and entry.get("nick") == nick):
-                entry["nick"] = nick
-                if unique_id:
-                    entry["unique_id"] = unique_id
-                entry["total_coins"] = entry.get("total_coins", 0) + total_coins
-                entry["gift_count"] = entry.get("gift_count", 0) + 1
-                if avatar_url:
-                    entry["avatar_url"] = avatar_url
-                found = True
-                break
-
-        if not found:
-            ranking.append({
-                "nick": nick,
-                "unique_id": unique_id or "",
-                "avatar_url": avatar_url or "",
-                "total_coins": total_coins,
-                "gift_count": 1,
-            })
-
-        ranking.sort(key=lambda x: x.get("total_coins", 0), reverse=True)
-        safe_json_write(ranking[:10], GIFTER_RANKING_FILE)
+        stream_ranking.update(
+            GIFTER_RANKING_FILE, nick, avatar_url, total_coins,
+            unique_id=unique_id, amount_key="total_coins",
+            count_key="gift_count", force=True,
+        )
     except Exception as e:
         print(f"Error updating gifter ranking: {e}")
+
+
+def update_liker_ranking(nick, avatar_url, likes, unique_id=""):
+    """Accumulate likes per viewer for the current live (top 10 served).
+
+    LikeEvent fires in bursts (one event carries `count` taps), so the
+    store throttles disk writes internally.
+    """
+    try:
+        avatar_url = avatar_url or _cached_avatar_url(nick, unique_id)
+        stream_ranking.update(
+            LIKER_RANKING_FILE, nick, avatar_url, likes,
+            unique_id=unique_id, amount_key="total_likes",
+            count_key="like_count",
+        )
+    except Exception as e:
+        print(f"Error updating liker ranking: {e}")
 
 
 @client.on(GiftEvent)
@@ -1295,7 +1549,9 @@ async def on_gift(event: GiftEvent):
                 print(f"[!] Gift asset lookup error for {gift_name}: {dl_err}")
 
         uid = _user_unique_id(u)
-        avatar_url = resolve_avatar_url(u, nick, uid)
+        # Avatar caching can perform an 8-second network download for a new
+        # viewer. Gameplay dispatch must never wait for that cosmetic work.
+        avatar_url = ""
 
         # Track active streaks
         if gift_type == 1 and group_id is not None:
@@ -1303,7 +1559,7 @@ async def on_gift(event: GiftEvent):
                 import time
                 active_streaks[group_id] = {
                     "user": nick,
-                    "avatar_url": avatar_url,
+                    "avatar_url": "",
                     "gift_name": gift_name,
                     "gift_id": gift_id,
                     "gift_icon": get_gift_icon(gift_id),
@@ -1313,27 +1569,6 @@ async def on_gift(event: GiftEvent):
             else:
                 # Streak ended — remove from active streaks
                 active_streaks.pop(group_id, None)
-            save_active_streaks()
-
-        # Only log completed gifts (not mid-streak updates)
-        if (gift_type != 1) or (not is_streaking):
-            asset_key = append_gift_log(
-                gift_id,
-                gift_name,
-                nick,
-                repeat_count,
-                total_coin,
-                diamond_count,
-                asset_url=asset_url,
-                asset_pending=asset_pending,
-            )
-            if asset_pending and asset_src_urls and asset_key:
-                start_gift_asset_download(asset_key, gift_id, asset_src_urls)
-            update_gifter_ranking(nick, avatar_url, total_coin, uid)
-            # Feed the coin goal jar overlay (gifts only, completed gifts only)
-            add_coins_to_jar(total_coin)
-            # Feed the gift goal overlay (only if this gift matches the configured goal gift)
-            add_to_gift_goal(gift_id, repeat_count, asset_url=asset_url)
 
         # Context for template substitution
         ctx = {
@@ -1347,17 +1582,71 @@ async def on_gift(event: GiftEvent):
             "asset_url": asset_url,
         }
 
-        # Send global reward only when NOT streaking or it's a non-streakable gift
-        if (gift_type != 1) or (not is_streaking):
+        completed_gift = (gift_type != 1) or (not is_streaking)
+        immediate_batches = []
+
+        # ── Gift Roulette reservation (plan: .hermes/plans/roulette-randomizer.md) ──
+        # Gift-level randomization: a successful reservation CONSUMES this gift's
+        # specific bundle and schedules the winner's full bundle to execute at
+        # land time. GlobalActions and all real-gift bookkeeping stay unchanged.
+        # Rejected spins (busy/cooldown/invalid pool/duplicate final) fall back
+        # to the normal gift-specific actions so the viewer keeps their reward.
+        # No YAML/disk work here: ROULETTE_CONFIG is a hot-reloaded in-memory
+        # snapshot, and the catalog index is built only when the trigger hits.
+        roulette_reserved = False
+        if (completed_gift and ROULETTE_CONFIG.get("enabled")
+                and not _should_skip_action_execution()
+                and str(gift_id) == str(ROULETTE_CONFIG.get("trigger_gift_id", ""))):
+            try:
+                catalog_rows = await asyncio.to_thread(
+                    gift_catalog.load_catalog, paths.data("available_gifts.json")
+                )
+                prepared = gift_roulette.prepare_spin(
+                    ROULETTE_CONFIG,
+                    GIFT_ACTIONS,
+                    config_snapshot_names := {},
+                    config_snapshot_descs := {},
+                    gift_roulette.build_catalog_index(catalog_rows),
+                    ctx,
+                    source="live",
+                    profile=_active_profile_name(),
+                )
+                accepted, rl_reason = ROULETTE_RUNTIME.try_reserve(
+                    prepared, int(ROULETTE_CONFIG.get("cooldown_ms", 2000))
+                )
+                if accepted:
+                    ROULETTE_RUNTIME.mark_reserved_started()
+                    roulette_reserved = True
+                    spin_task = asyncio.create_task(
+                        ROULETTE_RUNTIME.run_reserved(
+                            prepared,
+                            lambda actions, context: execute_actions(
+                                actions, context, send_minecraft_command
+                            ),
+                        )
+                    )
+                    spin_task.add_done_callback(_log_roulette_task_done)
+                    print(f"[ROULETTE] Spin started ({prepared.spin_id}) — trigger: {nick} {gift_name}")
+                else:
+                    print(f"[ROULETTE] Trigger rejected ({rl_reason}) — normal gift actions for {nick}")
+            except gift_roulette.RouletteValidationError as rl_err:
+                print(f"[ROULETTE] Pool invalid, normal gift actions for {nick}: {rl_err}")
+            except Exception as rl_err:
+                print(f"[ROULETTE] Unexpected error, normal gift actions for {nick}: {rl_err}")
+
+        # Send global reward only when NOT streaking or it's a non-streakable gift.
+        # Combine global + gift-specific actions into one concurrent dispatch so
+        # rapid alternating gifts never wait behind persistence or each other.
+        if completed_gift:
             print(f"[+] Gift: {nick} gave {gift_name} (id={gift_id}) {repeat_count} times. Total Coin: {total_coin}")
             default_gift_cmds = [
-                {"type": "minecraft", "command": "chatgift {gift_name} {repeat_count} {user} {total_coin} {mc}"},
+                {"type": "minecraft", "command": "chatgift {gift_name_q} {repeat_count} {user_q} {total_coin} {mc}"},
                 {"type": "minecraft", "command": "scoreboard players add Coins stats {total_coin}"}
             ]
-            await execute_actions(
+            immediate_batches.append((
                 GIFT_ACTIONS.get("GlobalActions", default_gift_cmds),
-                ctx, send_minecraft_command
-            )
+                dict(ctx),
+            ))
         else:
             print(f"[~] Gift streak: {nick} sending {gift_name} ({repeat_count} so far, streaking...)")
 
@@ -1377,17 +1666,84 @@ async def on_gift(event: GiftEvent):
                 delta = streak_tracker.apply(group_id, repeat_count, is_streaking)
 
                 if delta > 0:
-                    ctx["amount"] = str(delta)
-                    await execute_actions(
-                        GIFT_ACTIONS.get(gift_key, []),
-                        ctx, send_minecraft_command
-                    )
+                    gift_ctx = dict(ctx)
+                    gift_ctx["amount"] = str(delta)
+                    immediate_batches.append((GIFT_ACTIONS.get(gift_key, []), gift_ctx))
 
-            elif (gift_type != 1) or (not is_streaking):
-                await execute_actions(
-                    GIFT_ACTIONS.get(gift_key, []),
-                    ctx, send_minecraft_command
-                )
+            elif completed_gift and not roulette_reserved:
+                # Roulette consumed this trigger's specific bundle; the winner
+                # bundle fires at land time from the background spin task.
+                immediate_batches.append((GIFT_ACTIONS.get(gift_key, []), dict(ctx)))
+
+        # This is the latency-critical boundary. Minecraft actions already
+        # fire-and-forget their connector I/O; do not put avatar downloads,
+        # SQLite, ranking JSON, or overlay JSON ahead of this call.
+        await asyncio.gather(*(
+            execute_actions(actions, action_ctx, send_minecraft_command)
+            for actions, action_ctx in immediate_batches
+        ))
+
+        # Everything below is bookkeeping/cosmetic state. Keep it off the
+        # TikTok asyncio loop where it can block websocket heartbeats or later
+        # GiftEvent tasks during an A/B/A/B burst.
+        avatar_url = await asyncio.to_thread(resolve_avatar_url, u, nick, uid)
+
+        if gift_type == 1 and group_id is not None:
+            current_streak = active_streaks.get(group_id)
+            if current_streak is not None:
+                current_streak["avatar_url"] = avatar_url
+            streak_snapshot, streak_version = snapshot_active_streaks()
+            await asyncio.to_thread(
+                save_active_streaks, streak_snapshot, streak_version
+            )
+
+        # Only log completed gifts (not mid-streak updates).
+        if completed_gift:
+            # Teach the catalog this gift before anything reads its icon. For
+            # creator/event-exclusive gifts (Super GG, KhitoFam) this event is
+            # the ONLY place their icon and price ever appear. Off-loop because
+            # it touches disk; awaited so append_gift_log below sees the icon.
+            await asyncio.to_thread(
+                learn_gift_from_event, gift, gift_id, gift_name, diamond_count
+            )
+
+            asset_key = append_gift_log(
+                gift_id,
+                gift_name,
+                nick,
+                repeat_count,
+                total_coin,
+                diamond_count,
+                asset_url=asset_url,
+                asset_pending=asset_pending,
+            )
+            if asset_pending and asset_src_urls and asset_key:
+                start_gift_asset_download(asset_key, gift_id, asset_src_urls)
+
+            if _should_skip_action_execution():
+                print(f"[LOG-ONLY] Skipping gifter ranking update for {nick}")
+                print(f"[LOG-ONLY] Skipping points DB write for {nick}'s {gift_name} ({total_coin} coins)")
+            else:
+                update_gifter_ranking(nick, avatar_url, total_coin, uid)
+                try:
+                    import points_store
+                    await asyncio.to_thread(
+                        points_store.record_gift,
+                        user_id=_user_permanent_id(u),
+                        username=uid,
+                        nickname=nick,
+                        avatar_url=avatar_url,
+                        coins=total_coin,
+                        gift_id=gift_id,
+                        gift_name=gift_name,
+                    )
+                except Exception as points_err:
+                    print(f"[!] Points DB record failed: {points_err}")
+
+            await asyncio.gather(
+                asyncio.to_thread(add_coins_to_jar, total_coin),
+                asyncio.to_thread(add_to_gift_goal, gift_id, repeat_count, asset_url),
+            )
 
     except Exception as e:
         print(f"[!] Error in on_gift handler: {e}")
@@ -1438,6 +1794,30 @@ async def on_like(event: LikeEvent):
         event.total = like_highest_total
     else:
         like_highest_total = raw_total
+
+    # Top Likers leaderboard: accumulate this batch of likes per user.
+    # LikeEvent.count is the batch size; user is who tapped.
+    try:
+        user = getattr(event, "user", None)
+        if user is not None:
+            nick = getattr(user, "nickname", "") or ""
+            if nick:
+                batch = max(1, int(getattr(event, "count", 0) or 0))
+                # Resolve the avatar through the SAME path gifters use:
+                # extract the current TikTok URL, seed the persistent
+                # avatar cache, and fall back to the last-known URL when
+                # TikTokLive omits the picture on a like event. This keeps
+                # liker avatars from regressing to initials while a usable
+                # avatar exists for the same user.
+                uid = getattr(user, "unique_id", "") or ""
+                avatar_url = resolve_avatar_url(user, nick, uid)
+                stream_ranking.update(
+                    LIKER_RANKING_FILE, nick, avatar_url,
+                    batch, unique_id=uid,
+                    amount_key="total_likes", count_key="like_batches",
+                )
+    except Exception:
+        pass
 
     ctx = {"total_likes": str(event.total), "mc": MC_USERNAME, "user": "", "amount": "1"}
 
@@ -1499,7 +1879,7 @@ async def log_and_send(tag: str, gifter_level, nick: str, comment: str):
 
     ctx = {"tag": tag, "user": nick, "mc": MC_USERNAME, "comment": comment, "amount": "1"}
     default_comment_cmds = [
-        {"type": "minecraft", "command": "chatlog {tag} {user} {mc} {comment}"}
+        {"type": "minecraft", "command": "chatlog {tag} {user_q} {mc} {comment}"}
     ]
     comment_actions = EVENTS.get("Comment", default_comment_cmds)
     await execute_actions(
@@ -2290,6 +2670,7 @@ async def on_superfan_box(event: SuperFanBoxEvent):
 def run_bot():
     print("Starting Main TikTok -> Minecraft Sync...", flush=True)
     print(f"Loaded {len(GIFT_ACTIONS)} configured gifts.", flush=True)
+    bot_status.write_status(paths, "starting")
 
     from reconnect_policy import (
         INITIAL_RECONNECT_DELAY,
@@ -2304,6 +2685,7 @@ def run_bot():
 
     while retry_count < max_retries:
         try:
+            bot_status.write_status(paths, "connecting", attempt=retry_count + 1, max_attempts=max_retries)
             # TikTok's/Euler's bulk live-check endpoint can intermittently return
             # an empty body, which TikTokLive then tries to parse as JSON. Room ID
             # resolution and the signed WebSocket remain healthy, so bypass only
@@ -2318,6 +2700,7 @@ def run_bot():
                 pass
             if _stream_ended_cleanly:
                 print("Stream ended by streamer. Bot shutting down.", flush=True)
+                bot_status.write_status(paths, "stopped")
                 break
             retry_count += 1
             print(
@@ -2325,15 +2708,37 @@ def run_bot():
                 f"Reconnecting in {format_reconnect_delay(reconnect_delay)}...",
                 flush=True,
             )
+            bot_status.write_status(
+                paths,
+                "reconnecting",
+                attempt=retry_count,
+                max_attempts=max_retries,
+                error="Connection dropped",
+            )
             time.sleep(reconnect_delay)
             import random as _rr
             reconnect_delay = next_reconnect_delay(reconnect_delay, _rr.uniform(0, 2))
         except Exception as e:
             retry_count += 1
-            print(f"Disconnected unexpectedly ({retry_count}/{max_retries}) [{type(e).__name__}]: {e}", flush=True)
-            if _is_debug_mode_enabled():
-                import traceback
-                traceback.print_exc()
+            from reconnect_diagnostics import format_connection_failure
+
+            # Connection failures must always be actionable in the operator
+            # console. Debug Mode controls noisy event probes, not crash details.
+            # format_exception omits frame locals, so API keys/config secrets are
+            # not dumped while the exact TikTokLive call site remains visible.
+            failure_report = format_connection_failure(
+                e,
+                attempt=retry_count,
+                max_attempts=max_retries,
+            )
+            print(failure_report, flush=True)
+            bot_status.write_status(
+                paths,
+                "failed",
+                attempt=retry_count,
+                max_attempts=max_retries,
+                error=str(e),
+            )
             print(f"Reconnecting in {format_reconnect_delay(reconnect_delay)}...", flush=True)
             time.sleep(reconnect_delay)
             # Exponential backoff with jitter
@@ -2346,6 +2751,13 @@ def run_bot():
 
     if retry_count >= max_retries:
         print("Max reconnection attempts reached. Bot shutting down permanently.", flush=True)
+        bot_status.write_status(
+            paths,
+            "failed",
+            attempt=retry_count,
+            max_attempts=max_retries,
+            error="Max reconnection attempts reached",
+        )
 
 if __name__ == '__main__':
     run_bot()
