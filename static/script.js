@@ -5166,14 +5166,14 @@ function renderRoulettePool() {
     const up = document.createElement('button');
     up.className = 'btn btn-ghost btn-sm'; up.innerHTML = '<i class="fa-solid fa-arrow-up"></i>';
     up.disabled = idx === 0;
-    up.onclick = () => { [roulettePool[idx-1], roulettePool[idx]] = [roulettePool[idx], roulettePool[idx-1]]; renderRoulettePool(); };
+    up.onclick = () => { [roulettePool[idx-1], roulettePool[idx]] = [roulettePool[idx], roulettePool[idx-1]]; renderRoulettePool(); saveRouletteConfig(); };
     const down = document.createElement('button');
     down.className = 'btn btn-ghost btn-sm'; down.innerHTML = '<i class="fa-solid fa-arrow-down"></i>';
     down.disabled = idx === roulettePool.length - 1;
-    down.onclick = () => { [roulettePool[idx+1], roulettePool[idx]] = [roulettePool[idx], roulettePool[idx+1]]; renderRoulettePool(); };
+    down.onclick = () => { [roulettePool[idx+1], roulettePool[idx]] = [roulettePool[idx], roulettePool[idx+1]]; renderRoulettePool(); saveRouletteConfig(); };
     const rm = document.createElement('button');
     rm.className = 'btn btn-danger btn-sm'; rm.innerHTML = '&times;';
-    rm.onclick = () => { roulettePool.splice(idx, 1); renderRoulettePool(); };
+    rm.onclick = () => { roulettePool.splice(idx, 1); renderRoulettePool(); fillRouletteAddSelect(); saveRouletteConfig(); };
     row.appendChild(img); row.appendChild(name); row.appendChild(id);
     const btns = document.createElement('span');
     btns.className = 'roulette-pool-btns';
@@ -5232,11 +5232,13 @@ function renderRouletteTrigger() {
   clearBtn.onclick = () => {
     if (rouletteConfig) rouletteConfig.trigger_gift_id = '';
     renderRouletteTrigger();
+    saveRouletteConfig();
   };
   sel.onchange = () => {
     if (!rouletteConfig) rouletteConfig = {};
     rouletteConfig.trigger_gift_id = sel.value;
     renderRouletteTrigger();
+    saveRouletteConfig();
   };
   row.appendChild(sel);
   row.appendChild(clearBtn);
@@ -5285,9 +5287,30 @@ async function initRoulettePanel() {
     renderRoulettePool();
     fillRouletteAddSelect();
     renderRouletteWarnings(body.warnings || []);
+    bindRouletteAutosave();
   } catch (e) {
     showToast('Failed to load Roulette config', 'error');
   }
+}
+
+// One-time bindings: enable + timing inputs persist themselves. Guarded by a
+// flag because initRoulettePanel re-runs (programmatic .value sets don't fire
+// these listeners, so no save loops).
+let rouletteAutosaveBound = false;
+function bindRouletteAutosave() {
+  if (rouletteAutosaveBound) return;
+  rouletteAutosaveBound = true;
+  const en = document.getElementById('roulette-enabled');
+  // Toggle feels instant: skip the debounce.
+  if (en) en.addEventListener('change', () => saveRouletteConfig(true));
+  ['roulette-spin-ms', 'roulette-hold-ms', 'roulette-cooldown-ms'].forEach(id => {
+    const input = document.getElementById(id);
+    // Typing debounces 600ms; stepper arrows commit immediately.
+    if (input) {
+      input.addEventListener('input', () => saveRouletteConfig());
+      input.addEventListener('change', () => saveRouletteConfig(true));
+    }
+  });
 }
 
 function renderRouletteWarnings(warnings) {
@@ -5302,12 +5325,21 @@ function renderRouletteWarnings(warnings) {
   });
 }
 
-async function saveRouletteConfig() {
+// ── Roulette autosave ──
+// Every control persists itself (debounced) — there is no Save button.
+// Each save PUTs the full Roulette block assembled from current UI state,
+// shows a quiet "Saved ✓" / warning in the status line, and applies live
+// via the server hot-reload signal. Failures restore the last-known-good
+// checkbox state and surface an error toast; nothing is ever discarded.
+let rouletteSaveTimer = null;
+let rouletteSaving = false;
+
+function rouletteCollectPayload() {
   const en = document.getElementById('roulette-enabled');
   const spin = document.getElementById('roulette-spin-ms');
   const hold = document.getElementById('roulette-hold-ms');
   const cd = document.getElementById('roulette-cooldown-ms');
-  const payload = {
+  return {
     enabled: !!(en && en.checked),
     trigger_gift_id: (rouletteConfig && rouletteConfig.trigger_gift_id) || '',
     spin_ms: Math.round(parseFloat(spin ? spin.value : '5') * 1000),
@@ -5315,14 +5347,37 @@ async function saveRouletteConfig() {
     cooldown_ms: Math.round(parseFloat(cd ? cd.value : '2') * 1000),
     pool: [...roulettePool],
   };
+}
+
+function rouletteSaveState(text, kind) {
+  const status = document.getElementById('roulette-save-state');
+  if (!status) return;
+  status.textContent = text;
+  status.dataset.state = kind || '';
+}
+
+async function saveRouletteConfig(immediate) {
+  // immediate=true skips the debounce (enable toggle feels instant).
+  if (rouletteSaveTimer) { clearTimeout(rouletteSaveTimer); rouletteSaveTimer = null; }
+  if (!immediate) {
+    rouletteSaveState('Editing…', 'editing');
+    rouletteSaveTimer = setTimeout(() => saveRouletteConfig(true), 600);
+    return;
+  }
+  if (rouletteSaving) {  // coalesce bursts; the latest state always wins
+    rouletteSaveTimer = setTimeout(() => saveRouletteConfig(true), 600);
+    return;
+  }
+  rouletteSaving = true;
+  rouletteSaveState('Saving…', 'saving');
   try {
     const res = await fetch('/api/roulette/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(rouletteCollectPayload()),
     });
     const body = await res.json();
-    if (!res.ok) { showToast(body.message || 'Save failed', 'error'); return; }
+    if (!res.ok) { showToast(body.message || 'Save failed', 'error'); rouletteSaveState('Save failed — retrying on next change', 'error'); return; }
     if (body.roulette) {
       rouletteConfig = body.roulette;
       roulettePool = [...(body.roulette.pool || [])];
@@ -5331,13 +5386,19 @@ async function saveRouletteConfig() {
     renderRouletteWarnings(body.warnings || []);
     if (body.warnings && body.warnings.length) {
       showToast('Saved, but roulette left disabled: ' + body.warnings[0], 'warning');
+      const en = document.getElementById('roulette-enabled');
       if (en) en.checked = false;
+      rouletteSaveState('Saved ✓ (disabled — ' + body.warnings[0] + ')', 'warn');
     } else {
-      showToast('Roulette saved — applies live', 'success');
+      rouletteSaveState(
+        'Saved ✓ ' + (body.roulette && body.roulette.enabled ? '(live)' : '(disabled)'), 'ok'
+      );
     }
-    initRoulettePanel();
   } catch (e) {
     showToast('Save failed', 'error');
+    rouletteSaveState('Save failed — retrying on next change', 'error');
+  } finally {
+    rouletteSaving = false;
   }
 }
 
@@ -5451,12 +5512,10 @@ function playRouletteTestSpinAudio(landDelayMs) {
 
 // Bind roulette controls once DOM is ready.
 document.addEventListener('DOMContentLoaded', () => {
-  const save = document.getElementById('btn-roulette-save');
   const test = document.getElementById('btn-roulette-test');
   const add = document.getElementById('btn-roulette-add');
   const sound = document.getElementById('btn-roulette-sound');
   if (sound) sound.onclick = playRouletteSoundPreview;
-  if (save) save.onclick = saveRouletteConfig;
   if (test) test.onclick = testRouletteSpin;
   if (add) add.onclick = () => {
     const sel = document.getElementById('roulette-add-select');
@@ -5464,6 +5523,7 @@ document.addEventListener('DOMContentLoaded', () => {
       roulettePool.push(sel.value);
       renderRoulettePool();
       fillRouletteAddSelect();
+      saveRouletteConfig();
     }
   };
 });

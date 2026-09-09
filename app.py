@@ -457,8 +457,11 @@ def get_roulette_config():
     catalog_by_id = gift_roulette.build_catalog_index(
         catalog_rows if isinstance(catalog_rows, list) else []
     )
-    entries = gift_roulette.resolve_entries(normalized, gifts, {}, {}, catalog_by_id)
-
+    entries = gift_roulette.resolve_entries(
+        normalized, gifts,
+        config.get("GiftNames", {}) or {}, config.get("GiftDescriptions", {}) or {},
+        catalog_by_id,
+    )
     warnings = []
     valid_ids = {e["gift_id"] for e in entries}
     for gift_id in normalized["pool"]:
@@ -495,7 +498,11 @@ def update_roulette_config():
     catalog_by_id = gift_roulette.build_catalog_index(
         catalog_rows if isinstance(catalog_rows, list) else []
     )
-    entries = gift_roulette.resolve_entries(normalized, gifts, {}, {}, catalog_by_id)
+    entries = gift_roulette.resolve_entries(
+        normalized, gifts,
+        config.get("GiftNames", {}) or {}, config.get("GiftDescriptions", {}) or {},
+        catalog_by_id,
+    )
 
     # NEVER discard the user's save. Invalid-enable does not 400: it persists
     # everything with enabled=False and returns a warning the panel shows.
@@ -565,7 +572,9 @@ def test_roulette_spin():
 
     try:
         prepared = gift_roulette.prepare_spin(
-            normalized, gifts, {}, {}, catalog_by_id, trigger_ctx,
+            normalized, gifts,
+            config.get("GiftNames", {}) or {}, config.get("GiftDescriptions", {}) or {},
+            catalog_by_id, trigger_ctx,
             source="test", profile=get_active_profile(),
         )
     except gift_roulette.RouletteValidationError as exc:

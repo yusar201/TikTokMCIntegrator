@@ -144,6 +144,37 @@ class ResolveEntriesTest(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         self.assertNotIn("spawnmob", entries[0]["label"])
 
+    def test_action_label_prefers_description(self):
+        # Khito's paper-crane case: description wins over command-derived text.
+        entries = gift_roulette.resolve_entries(
+            _config(pool=["5269", "5333"]), _gifts(), _names(), _descriptions(), _catalog()
+        )
+        by_id = {e["gift_id"]: e for e in entries}
+        self.assertEqual(by_id["5269"]["action_label"], "A baby husk army appears")
+        # 5333 has no description: title/verb path, then GiftNames.
+        self.assertEqual(by_id["5333"]["action_label"], "Silverfish Platoon")
+
+    def test_action_label_title_before_verb(self):
+        gifts = {"5269": [{"type": "minecraft", "command": "titlecustom {user} {amount} Baby Husk"}]}
+        entries = gift_roulette.resolve_entries(
+            _config(pool=["5269"]), gifts, {}, {}, {}
+        )
+        self.assertEqual(entries[0]["action_label"], "Baby Husk")
+
+    def test_action_label_verb_then_name_then_id(self):
+        gifts = {"5269": [{"type": "minecraft", "command": "spawnmob {mc} {amount} zombie {user}"}]}
+        entries = gift_roulette.resolve_entries(
+            _config(pool=["5269"]), gifts, {}, {}, {}
+        )
+        self.assertEqual(entries[0]["action_label"], "Spawnmob")
+        # no usable command at all -> GiftNames -> catalog -> Gift #id
+        gifts = {"5269": [{"type": "minecraft", "command": "rtp {mc} {user}"}]}
+        entries = gift_roulette.resolve_entries(
+            _config(pool=["5269"]), gifts, _names(), {}, {}
+        )
+        self.assertNotIn("{mc}", entries[0]["action_label"])
+        self.assertNotIn("rtp", entries[0]["action_label"])
+
     def test_invalid_pool_entries_are_excluded(self):
         # 5487 has an empty bundle, 9999 not configured, GlobalActions forbidden
         entries = gift_roulette.resolve_entries(

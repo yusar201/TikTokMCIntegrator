@@ -150,13 +150,19 @@ def _display_label(gift_id: str, names: dict, descriptions: dict, catalog_by_id:
     return f"Gift #{gift_id}"
 
 
-def _action_label(actions: list, gift_id: str, catalog_by_id: dict) -> str:
-    """Human-readable action name derived from the bundle itself.
+def _action_label(actions: list, gift_id: str, descriptions: dict,
+                 names: dict, catalog_by_id: dict) -> str:
+    """Human-readable action name for the reel.
 
-    Prefers the titlecustom/title text (that IS the event Khito configured),
-    then a minecraft command verb, then falls back to the gift label. Never
-    leaks raw placeholders like {user}/{mc}/{amount}.
+    Khito maintains this text in the gift list as the description — that wins
+    whenever present ("the action description"). Otherwise the titlecustom/
+    title text (the event he configured), then a minecraft command verb, then
+    GiftNames, catalog name, Gift #id. Never leaks raw placeholders like
+    {user}/{mc}/{amount} or raw command text.
     """
+    desc = str((descriptions or {}).get(gift_id, "") or "").strip()
+    if desc:
+        return desc
     import re as _re
     best_title = ""
     best_cmd = ""
@@ -179,6 +185,9 @@ def _action_label(actions: list, gift_id: str, catalog_by_id: dict) -> str:
         return best_title
     if best_cmd:
         return best_cmd.capitalize()
+    name = str((names or {}).get(gift_id, "") or "").strip()
+    if name:
+        return name
     row = catalog_by_id.get(gift_id)
     if row:
         cat_name = str(row.get("name") or "").strip()
@@ -221,7 +230,9 @@ def resolve_entries(config: dict, gifts: dict, gift_names: dict,
             # (title text), not the gift name. Kept separate from `label` so
             # Gift Card Studio text doctrine (descriptions drive visible text)
             # is untouched.
-            "action_label": _action_label(actions, gift_id, catalog_by_id),
+            "action_label": _action_label(
+                actions, gift_id, descriptions or {}, gift_names or {}, catalog_by_id
+            ),
             "icon_url": str(row.get("icon") or ""),
             "diamond_count": int(row.get("diamond_count") or 0),
         })

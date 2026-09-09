@@ -9,7 +9,7 @@
   try { if (localStorage.getItem('tmc-theme') === 'light') document.documentElement.setAttribute('data-theme','light'); } catch(e){}
 </script>
 <link rel="stylesheet" href="/static/app-font.css?v=1">
-<link rel="stylesheet" href="/static/style.css?v=47">
+<link rel="stylesheet" href="/static/style.css?v=48">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -469,9 +469,9 @@
     <div class="panel" id="panel-roulette">
       <div class="section-header">
         <h2><i class="fa-solid fa-shuffle"></i> Gift Roulette</h2>
-        <div style="display:flex; gap:8px;">
+        <div style="display:flex; gap:8px; align-items:center;">
+          <span id="roulette-autosave-note" class="roulette-autosave-note">Autosaves on every change</span>
           <button class="btn btn-ghost btn-sm" id="btn-roulette-test"><i class="fa-solid fa-play"></i> Test Spin</button>
-          <button class="btn btn-primary" id="btn-roulette-save"><i class="fa-solid fa-save"></i> Save Roulette</button>
         </div>
       </div>
 
@@ -520,6 +520,7 @@
       <div class="form-card">
         <h3><i class="fa-solid fa-tv"></i> Last Spin</h3>
         <div id="roulette-status" class="roulette-status">No spins yet this session.</div>
+        <div id="roulette-save-state" class="roulette-save-state"></div>
       </div>
     </div>
 
@@ -1772,6 +1773,6 @@
 <script src="/static/overlay_previews.js?v=1"></script>
 <script src="/static/points_period.js?v=1"></script>
 <script src="/static/song_history_filters.js?v=1"></script>
-<script src="/static/script.js?v=59"></script>
+<script src="/static/script.js?v=60"></script>
 </body>
 </html>

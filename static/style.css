@@ -5028,3 +5028,19 @@ body[data-skin="pixel"] .song-feedback-user { color: var(--px-green) !important;
   color: var(--text-muted);
   min-height: 20px;
 }
+.roulette-save-state {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-height: 16px;
+  margin-top: 2px;
+}
+.roulette-save-state[data-state="ok"] { color: #7fae6e; }
+.roulette-save-state[data-state="warn"] { color: var(--warning); }
+.roulette-save-state[data-state="error"] { color: #c25b5b; }
+.roulette-save-state[data-state="editing"],
+.roulette-save-state[data-state="saving"] { opacity: 0.7; font-style: italic; }
+.roulette-autosave-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
