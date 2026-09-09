@@ -5356,10 +5356,64 @@ async function testRouletteSpin() {
         : (body.message || 'Test spin failed');
     }
     if (!res.ok) showToast(body.message || 'Test spin failed', 'error');
-    else showToast('Test spin started: ' + body.winner, 'success');
+    else {
+      showToast('Test spin started: ' + body.winner, 'success');
+      // Mirror the spin audio in the dashboard: the overlay iframe's context
+      // stays suspended (no gesture inside the frame), but the Test Spin click
+      // unlocked THIS context — so time the roll to the real land delay.
+      playRouletteTestSpinAudio(
+        Math.max(0, Math.round(((body.lands_at || 0) - Date.now() / 1000) * 1000))
+      );
+    }
   } catch (e) {
     showToast('Test spin failed', 'error');
   }
+}
+
+// ── Slot synth (shared by preview + test-spin mirror; same recipe as overlay) ──
+function rouletteTickAt(ctx, t) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(1900 + Math.random() * 500, t);
+  gain.gain.setValueAtTime(0.06, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.045);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(t); osc.stop(t + 0.05);
+}
+
+function rouletteChimeAt(ctx, t0) {
+  [[523.25, 0.0, 0.14], [783.99, 0.09, 0.16], [1046.5, 0.18, 0.22]].forEach(([freq, dt, dur]) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(freq, t0 + dt);
+    gain.gain.setValueAtTime(0.0001, t0 + dt);
+    gain.gain.exponentialRampToValueAtTime(0.12, t0 + dt + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + dur);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0 + dt); osc.stop(t0 + dt + dur + 0.05);
+  });
+}
+
+// Schedules `count` decelerating ticks spanning totalMs, then the land chime.
+// Returns the end offset (seconds) so callers can close the context.
+function rouletteRollSynth(ctx, tStart, totalMs, count) {
+  const weights = [];
+  let weightSum = 0;
+  for (let i = 0; i < count; i++) {
+    const w = 0.045 + 0.11 * Math.pow(count > 1 ? i / (count - 1) : 0, 1.8);
+    weights.push(w); weightSum += w;
+  }
+  const scale = weightSum > 0 ? (totalMs / 1000) / weightSum : 0;
+  let delay = 0;
+  for (let i = 0; i < count; i++) {
+    rouletteTickAt(ctx, tStart + delay);
+    delay += weights[i] * scale;
+  }
+  const tLand = tStart + delay + 0.12;
+  rouletteChimeAt(ctx, tLand);
+  return delay + 0.8;
 }
 
 // ── Slot sound preview (same synth as the overlay) ──
@@ -5368,36 +5422,28 @@ function playRouletteSoundPreview() {
   if (!AC) { showToast('Web Audio not available', 'error'); return; }
   const ctx = new AC();
   const play = () => {
-    // Roll ticks: 14 clicks decelerating (mimics the reel easing).
-    let delay = 0;
-    for (let i = 0; i < 14; i++) {
-      const t = ctx.currentTime + delay;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(1900 + Math.random() * 500, t);
-      gain.gain.setValueAtTime(0.06, t);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.045);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(t); osc.stop(t + 0.05);
-      delay += 0.045 + 0.11 * Math.pow(i / 13, 1.8);
-    }
-    // Land chime after the roll.
-    const t0 = ctx.currentTime + delay + 0.12;
-    [[523.25, 0.0, 0.14], [783.99, 0.09, 0.16], [1046.5, 0.18, 0.22]].forEach(([freq, dt, dur]) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(freq, t0 + dt);
-      gain.gain.setValueAtTime(0.0001, t0 + dt);
-      gain.gain.exponentialRampToValueAtTime(0.12, t0 + dt + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + dur);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(t0 + dt); osc.stop(t0 + dt + dur + 0.05);
-    });
-    setTimeout(() => ctx.close(), (delay + 0.8) * 1000);
+    // Fixed ~1.5s demo roll: 14 clicks decelerating (mimics the reel easing).
+    const endOffset = rouletteRollSynth(ctx, ctx.currentTime, 1500, 14);
+    setTimeout(() => ctx.close(), endOffset * 1000);
   };
   // Click on the button IS a user gesture — resume then play.
+  if (ctx.state === 'suspended') ctx.resume().then(play); else play();
+}
+
+// ── Test-spin audio mirror ──
+// The overlay iframe never receives a click, so its AudioContext stays
+// suspended in a browser tab (OBS allows autoplay — stream audio is fine).
+// Mirror the spin audio here in the dashboard, timed to the real land delay:
+// the click on Test Spin IS the gesture that unlocked THIS context.
+function playRouletteTestSpinAudio(landDelayMs) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  const totalMs = Math.max(600, landDelayMs);
+  const ctx = new AC();
+  const play = () => {
+    const endOffset = rouletteRollSynth(ctx, ctx.currentTime, totalMs, 14);
+    setTimeout(() => ctx.close(), endOffset * 1000);
+  };
   if (ctx.state === 'suspended') ctx.resume().then(play); else play();
 }
 
