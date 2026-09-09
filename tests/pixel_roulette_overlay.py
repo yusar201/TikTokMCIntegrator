@@ -56,25 +56,28 @@ def main():
     try:
         with _flask_client() as client:
             html = client.get("/overlay/roulette").get_data(as_text=True)
-            scratch_win = str(SCRATCH).replace("/mnt/d/", "D:/")
 
             # --- state 1: idle ---
             p1 = SCRATCH / "overlay_idle.png"
             _shoot(html, p1, state={"status": "idle"})
 
-            # --- state 2: spinning (mid-roll) ---
+            # --- state 2: spinning mid-roll (lands 30s out so it stays rolling) ---
             p2 = SCRATCH / "overlay_spinning.png"
             _shoot(html, p2, state=_spin_state("spinning", spin_ms=30.0))
 
-            # --- state 3: landed (2-entry pool) ---
-            p3 = SCRATCH / "overlay_landed.png"
-            _shoot(html, p3, state=_spin_state("landed", spin_ms=-0.5))
+            # --- state 3: mid POP (bounce in flight, 350ms in) ---
+            p3 = SCRATCH / "overlay_pop.png"
+            _shoot(html, p3, state=_spin_state("landed", spin_ms=30.0), budget=350)
 
-            # --- state 4: landed, 100-entry pool (geometry must match state 3) ---
-            p4 = SCRATCH / "overlay_bigpool.png"
-            _shoot(html, p4, state=_spin_state("landed", spin_ms=-0.5, entries_n=100))
+            # --- state 4: landed settled (pop done, winner gold, still holding) ---
+            p4 = SCRATCH / "overlay_landed.png"
+            _shoot(html, p4, state=_spin_state("landed", spin_ms=30.0))
 
-        results = _analyze([p1, p2, p3, p4])
+            # --- state 5: 100-entry pool landed (geometry must match state 4) ---
+            p5 = SCRATCH / "overlay_bigpool.png"
+            _shoot(html, p5, state=_spin_state("landed", spin_ms=30.0, entries_n=100))
+
+        results = _analyze([p1, p2, p3, p4, p5])
         # Geometry equality between pool 2 and pool 100 (fixed-geometry rule)
         geoms = [detail for _, _, detail in results]
         print("geometry lines above; expect identical bbox for landed vs bigpool")
@@ -87,12 +90,14 @@ def main():
     sys.exit(0 if all(ok for _, ok, _ in results) else 1)
 
 
-def _shoot(html, out_path, wait_ms=1500, state=None):
+def _shoot(html, out_path, state=None, budget=2500):
     """Render real overlay HTML + real static css in headless Chrome.
 
     file:// origin cannot fetch /api/*, so the harness injects a mock fetch
     returning the given state (or idle) BEFORE the overlay's own script runs.
-    The overlay JS itself is the real unmodified script.
+    The overlay JS itself is the real unmodified script. `budget` is the
+    virtual-time window: CSS animations run inside it, so capture timing
+    picks the frame (e.g. 350ms = mid pop-in squash).
     """
     page = SCRATCH / "page.html"
     css_href = (ROOT / "static" / "style.css").as_uri()
@@ -115,7 +120,7 @@ def _shoot(html, out_path, wait_ms=1500, state=None):
         "--allow-file-access-from-files",
         "--force-device-scale-factor=1",
         "--window-size=800,300",
-        "--virtual-time-budget=6000",
+        f"--virtual-time-budget={budget}",
         "--screenshot=" + str(out_path).replace("/mnt/d/", "D:/").replace("/", "\\"),
         "file:///" + str(page).replace("/mnt/d/", "D:/").replace("\\", "/"),
     ]
