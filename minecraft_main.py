@@ -313,6 +313,9 @@ GIFT_ACTIONS = config.get("Gifts", {})
 # Never parsed per gift event: re-normalized only at startup and on hot-reload,
 # exactly like GIFT_ACTIONS. Saving in the dashboard applies live via signal_reload.
 ROULETTE_CONFIG = gift_roulette.normalize_config(config.get("Roulette"))
+# Roulette display snapshots: GiftNames + GiftDescriptions for reel labels.
+ROULETTE_NAMES = dict(config.get("GiftNames", {}) or {})
+ROULETTE_DESCRIPTIONS = dict(config.get("GiftDescriptions", {}) or {})
 # Stale spinning state from a prior process is cancelled, never replayed.
 ROULETTE_RUNTIME = gift_roulette.RouletteRuntime(paths.data("roulette_state.json"))
 try:
@@ -405,7 +408,7 @@ def register_dynamic_events():
 # Hot-reloadable globals (re-read from config on signal)
 def reload_config():
     """Hot-reload config changes without restarting the bot. Only non-critical settings."""
-    global VIP_LIST, GIFTS_WITH_STREAK_DELTA, GIFT_ACTIONS, EVENTS, GLOBAL_COMMANDS, CUSTOM_EVENTS, CHAT_FILTER, CHAT_FILTER_MIN_GIFTER_LEVEL, CHAT_FILTER_MIN_MEMBER_LEVEL, ROULETTE_CONFIG
+    global VIP_LIST, GIFTS_WITH_STREAK_DELTA, GIFT_ACTIONS, EVENTS, GLOBAL_COMMANDS, CUSTOM_EVENTS, CHAT_FILTER, CHAT_FILTER_MIN_GIFTER_LEVEL, CHAT_FILTER_MIN_MEMBER_LEVEL, ROULETTE_CONFIG, ROULETTE_NAMES, ROULETTE_DESCRIPTIONS
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
@@ -420,6 +423,10 @@ def reload_config():
         config = migrate_to_events_redesign(config)
         GIFT_ACTIONS = config.get("Gifts", {})
         ROULETTE_CONFIG = gift_roulette.normalize_config(config.get("Roulette"))
+        # Roulette display names: GiftNames/GiftDescriptions snapshots for the
+        # reel labels — hot-reloaded with everything else.
+        ROULETTE_NAMES = dict(config.get("GiftNames", {}) or {})
+        ROULETTE_DESCRIPTIONS = dict(config.get("GiftDescriptions", {}) or {})
         EVENTS = config.get("Events", {})
         GLOBAL_COMMANDS = config.get("GlobalCommands", {})
         CUSTOM_EVENTS = config.get("CustomEvents", {})
@@ -1604,8 +1611,8 @@ async def on_gift(event: GiftEvent):
                 prepared = gift_roulette.prepare_spin(
                     ROULETTE_CONFIG,
                     GIFT_ACTIONS,
-                    config_snapshot_names := {},
-                    config_snapshot_descs := {},
+                    ROULETTE_NAMES,
+                    ROULETTE_DESCRIPTIONS,
                     gift_roulette.build_catalog_index(catalog_rows),
                     ctx,
                     source="live",

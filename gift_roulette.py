@@ -150,6 +150,43 @@ def _display_label(gift_id: str, names: dict, descriptions: dict, catalog_by_id:
     return f"Gift #{gift_id}"
 
 
+def _action_label(actions: list, gift_id: str, catalog_by_id: dict) -> str:
+    """Human-readable action name derived from the bundle itself.
+
+    Prefers the titlecustom/title text (that IS the event Khito configured),
+    then a minecraft command verb, then falls back to the gift label. Never
+    leaks raw placeholders like {user}/{mc}/{amount}.
+    """
+    import re as _re
+    best_title = ""
+    best_cmd = ""
+    for action in actions if isinstance(actions, list) else []:
+        if not isinstance(action, dict):
+            continue
+        cmd = str(action.get("command", "") or "")
+        if not best_title and cmd.lower().startswith(("titlecustom", "title")):
+            parts = cmd.split()
+            # Last non-placeholder token is the title text Khito wrote.
+            tokens = [t for t in parts[1:] if not _re.search(r"\{", t)]
+            if tokens:
+                best_title = " ".join(tokens).strip("'\"")
+        if not best_cmd:
+            for verb in ("spawnmob", "summon", "execute", "playsound", "effect", "give"):
+                if verb in cmd.lower():
+                    best_cmd = verb
+                    break
+    if best_title:
+        return best_title
+    if best_cmd:
+        return best_cmd.capitalize()
+    row = catalog_by_id.get(gift_id)
+    if row:
+        cat_name = str(row.get("name") or "").strip()
+        if cat_name:
+            return cat_name
+    return f"Gift #{gift_id}"
+
+
 def resolve_entries(config: dict, gifts: dict, gift_names: dict,
                     descriptions: dict, catalog_by_id: dict) -> list:
     """Resolve the configured pool into display entries for overlay/dashboard.
@@ -180,6 +217,11 @@ def resolve_entries(config: dict, gifts: dict, gift_names: dict,
         entries.append({
             "gift_id": gift_id,
             "label": _display_label(gift_id, gift_names or {}, descriptions or {}, catalog_by_id),
+            # Action name for the overlay reel: the event Khito configured
+            # (title text), not the gift name. Kept separate from `label` so
+            # Gift Card Studio text doctrine (descriptions drive visible text)
+            # is untouched.
+            "action_label": _action_label(actions, gift_id, catalog_by_id),
             "icon_url": str(row.get("icon") or ""),
             "diamond_count": int(row.get("diamond_count") or 0),
         })

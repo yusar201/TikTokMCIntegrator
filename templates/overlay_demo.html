@@ -817,6 +817,31 @@ body[data-tglayout="right"] .tg-card .tg-gift-row { justify-content: flex-end !i
   z-index: 50;
 }
 .rl-wrap.rl-visible { display: block; }
+/* Bouncy pop ("boing boing"): card springs up from its bottom edge with
+   squash-and-stretch, settles after two diminishing bounces. Pure
+   presentation — settled geometry unchanged (fixed-geometry rule). */
+.rl-card {
+  transform-origin: 50% 100%;
+}
+.rl-wrap.rl-visible .rl-card {
+  animation: rlPopIn 0.6s cubic-bezier(.22,.9,.34,1.2) both;
+}
+.rl-wrap.rl-hiding .rl-card {
+  animation: rlPopOut 0.32s cubic-bezier(.5,0,.75,.4) both;
+}
+@keyframes rlPopIn {
+  0%   { transform: scale(.2,.06); opacity: 0; }
+  40%  { transform: scale(1.14,.8); opacity: 1; }
+  60%  { transform: scale(.88,1.12); }
+  78%  { transform: scale(1.06,.95); }
+  91%  { transform: scale(.98,1.02); }
+  100% { transform: scale(1,1); opacity: 1; }
+}
+@keyframes rlPopOut {
+  0%   { transform: scale(1,1); opacity: 1; }
+  35%  { transform: scale(1.08,.88); }
+  100% { transform: scale(.1,.04); opacity: 0; }
+}
 .rl-card {
   width: 360px;
   box-sizing: border-box;
@@ -843,29 +868,17 @@ body[data-tglayout="right"] .tg-card .tg-gift-row { justify-content: flex-end !i
 }
 .rl-strip { will-change: transform; }
 .rl-row {
-  height: 52px; box-sizing: border-box; display: flex; align-items: center; gap: 10px;
-  padding: 0 10px; filter: grayscale(1) brightness(.6);
+  height: 52px; box-sizing: border-box; display: flex; align-items: center; justify-content: center;
+  padding: 0 12px; filter: grayscale(1) brightness(.6);
 }
 .rl-row.rl-winner { filter: none; background: rgba(255, 215, 94, .14); }
-.rl-icon-wrap {
-  width: 40px; height: 40px; flex: 0 0 40px; display: flex; align-items: center; justify-content: center;
-  background: #000; border: 2px solid #3a3d44; box-sizing: border-box; overflow: hidden;
-}
-.rl-icon-wrap img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; border-radius: 0; display: block; }
-.rl-icon-fallback { font-size: 20px; color: #666; line-height: 1; }
-.rl-texts { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rl-texts { min-width: 0; display: flex; flex-direction: column; align-items: center; }
 .rl-label {
-  font-size: 13px; color: #fff; text-shadow: 1px 1px 0 #000;
+  font-size: 17px; font-weight: 700; color: #fff; text-shadow: 2px 2px 0 #000;
   -webkit-text-fill-color: #fff; -webkit-text-stroke: 0 transparent;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 250px;
-}
-.rl-gift-name {
-  font-size: 10px; color: #9aa0ab; text-shadow: 1px 1px 0 #000;
-  -webkit-text-fill-color: #9aa0ab; -webkit-text-stroke: 0 transparent;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 250px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 330px;
 }
 .rl-winner .rl-label { color: #ffd75e; -webkit-text-fill-color: #ffd75e; }
-.rl-row.rl-winner .rl-icon-wrap { border-color: #ffd75e; }
 /* ===== GIFT ROULETTE END ===== */
 
 </style>
@@ -1067,10 +1080,21 @@ async function fetchData() {
 // ===== GIFT ROULETTE (mirrors overlay.html) =====
 let rlCurrentSpinId = null;
 let rlHideTimer = null;
+let rlHideAnimTimer = null;
 
 function rlHide() {
   const wrap = document.getElementById('rl-wrap');
-  if (wrap) { wrap.classList.remove('rl-visible'); wrap.setAttribute('aria-hidden', 'true'); }
+  if (wrap && wrap.classList.contains('rl-visible') && !wrap.classList.contains('rl-hiding')) {
+    // Bouncy squash-out first, then actually hide.
+    wrap.classList.add('rl-hiding');
+    rlHideAnimTimer = setTimeout(() => { rlHideAnimTimer = null; rlHide(); }, 340);
+    return;
+  }
+  if (wrap) {
+    wrap.classList.remove('rl-visible');
+    wrap.classList.remove('rl-hiding');
+    wrap.setAttribute('aria-hidden', 'true');
+  }
   const strip = document.getElementById('rl-strip');
   if (strip) strip.innerHTML = '';
   rlCurrentSpinId = null;
@@ -1080,40 +1104,89 @@ function rlHide() {
 function rlBuildRow(entry) {
   const row = document.createElement('div');
   row.className = 'rl-row';
-  const iconWrap = document.createElement('div');
-  iconWrap.className = 'rl-icon-wrap';
-  const iconUrl = String(entry.icon_url || '');
-  if (iconUrl) {
-    const img = document.createElement('img');
-    img.alt = '';
-    img.onerror = function() {
-      img.remove();
-      const fb = document.createElement('span');
-      fb.className = 'rl-icon-fallback';
-      fb.textContent = '?';
-      iconWrap.appendChild(fb);
-    };
-    img.src = iconUrl;
-    iconWrap.appendChild(img);
-  } else {
-    const fb = document.createElement('span');
-    fb.className = 'rl-icon-fallback';
-    fb.textContent = '?';
-    iconWrap.appendChild(fb);
-  }
+  // Text-only reel: the ACTION name, no gift icon, no gift name (mirrors overlay.html).
   const texts = document.createElement('div');
   texts.className = 'rl-texts';
   const label = document.createElement('div');
   label.className = 'rl-label';
-  label.textContent = String(entry.label || '');
-  const giftName = document.createElement('div');
-  giftName.className = 'rl-gift-name';
-  giftName.textContent = '#' + String(entry.gift_id || '');
+  const actionName = String(entry.action_label || '').trim();
+  label.textContent = actionName || String(entry.label || '') || ('#' + String(entry.gift_id || ''));
   texts.appendChild(label);
-  texts.appendChild(giftName);
-  row.appendChild(iconWrap);
   row.appendChild(texts);
   return row;
+}
+
+// ── Slot sounds (Web Audio, mirrors overlay.html) ──
+let rlAudioCtx = null;
+let rlTickTimer = null;
+let rlLastTickRow = -1;
+
+function rlAudio() {
+  if (!rlAudioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    rlAudioCtx = new AC();
+  }
+  if (rlAudioCtx.state === 'suspended') rlAudioCtx.resume();
+  return rlAudioCtx;
+}
+
+function rlTick() {
+  const ctx = rlAudio();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(1900 + Math.random() * 500, t);
+  gain.gain.setValueAtTime(0.06, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.045);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + 0.05);
+}
+
+function rlChime() {
+  const ctx = rlAudio();
+  if (!ctx) return;
+  const t0 = ctx.currentTime;
+  [[523.25, 0.0, 0.14], [783.99, 0.09, 0.16], [1046.5, 0.18, 0.22]].forEach(([freq, dt, dur]) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(freq, t0 + dt);
+    gain.gain.setValueAtTime(0.0001, t0 + dt);
+    gain.gain.exponentialRampToValueAtTime(0.12, t0 + dt + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + dur);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0 + dt);
+    osc.stop(t0 + dt + dur + 0.05);
+  });
+}
+
+function rlStartTicks(durationMs, rowCount) {
+  rlStopTicks();
+  const ctx = rlAudio();
+  if (!ctx) return;
+  const startPerf = performance.now();
+  const step = () => {
+    const elapsed = performance.now() - startPerf;
+    if (elapsed >= durationMs) { rlStopTicks(); return; }
+    const p = Math.min(1, elapsed / durationMs);
+    const eased = 1 - Math.pow(1 - p, 2.2);
+    const visibleRow = Math.min(rowCount - 1, Math.floor(eased * (rowCount - 1)));
+    if (visibleRow !== rlLastTickRow) {
+      rlLastTickRow = visibleRow;
+      rlTick();
+    }
+    rlTickTimer = requestAnimationFrame(step);
+  };
+  rlTickTimer = requestAnimationFrame(step);
+}
+
+function rlStopTicks() {
+  if (rlTickTimer) { cancelAnimationFrame(rlTickTimer); rlTickTimer = null; }
+  rlLastTickRow = -1;
 }
 
 function rlStartSpin(data) {
@@ -1131,6 +1204,11 @@ function rlStartSpin(data) {
   const reel = Array.isArray(data.reel) ? data.reel : [];
   reel.forEach(idx => { const e = entries[idx]; if (e) strip.appendChild(rlBuildRow(e)); });
   if (!strip.children.length) { rlHide(); return; }
+  if (rlHideAnimTimer) { clearTimeout(rlHideAnimTimer); rlHideAnimTimer = null; }
+  wrap.classList.remove('rl-hiding');
+  // Restart the pop animation on every new spin (remove/re-add class trick).
+  wrap.classList.remove('rl-visible');
+  void wrap.offsetWidth;
   wrap.classList.add('rl-visible');
   wrap.setAttribute('aria-hidden', 'false');
   const rowH = 52;
@@ -1145,12 +1223,15 @@ function rlStartSpin(data) {
     const rows = strip.children;
     if (rows.length) rows[rows.length - 1].classList.add('rl-winner');
     strip.style.willChange = 'auto';
+    rlStopTicks();
+    rlChime();
   };
   if (durationMs <= 0) {
     strip.style.transform = 'translate3d(0, ' + (-distance) + 'px, 0)';
     finish();
   } else {
     strip.style.willChange = 'transform';
+    rlStartTicks(durationMs, strip.children.length);
     requestAnimationFrame(() => {
       strip.style.transition = 'transform ' + durationMs.toFixed(0) + 'ms cubic-bezier(.15,.85,.25,1)';
       strip.style.transform = 'translate3d(0, ' + (-distance) + 'px, 0)';

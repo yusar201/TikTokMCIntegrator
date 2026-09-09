@@ -1,0 +1,2159 @@
+
+const TYPE = '{{ overlay_type }}';
+
+// Parse URL query params for filters
+const params = new URLSearchParams(window.location.search);
+const isPreview = params.get('preview') === 'true';
+// Packed TikTok animations require CPU readback/compositing. OBS gets a
+// bounded 20 FPS path; dashboard previews intentionally use the static icon.
+const PACKED_ALPHA_FRAME_MS = 50;
+// Learn one mask sample per budgeted 20 FPS frame across the first complete loop.
+// Some gifts reveal their upper half well after the first ten rendered frames.
+const PACKED_ALPHA_CROP_SAMPLE_MS = 50;
+
+// ===== Song overlay skin selector (additive — default skin unchanged) =====
+// ?skin=pixel → 8-bit/pixel art look via [data-skin="pixel"] CSS block.
+(function applyOverlaySkin() {
+  const skin = (params.get('skin') || '').toLowerCase();
+  if (skin && skin !== 'default') {
+    document.body.setAttribute('data-skin', skin);
+  }
+})();
+
+// Preview mode: center overlays
+if (isPreview) {
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.overlay-wrap').forEach(el => {
+      el.style.justifyContent = 'center';
+      el.style.alignItems = 'center';
+    });
+    // Chat + gift feeds: make scrollable in the dashboard live preview so
+    // Khito can scroll back through the full feed (e.g. end-of-stream gift
+    // showcase). OBS (no preview param) keeps the fixed bottom-anchored feed.
+    if (TYPE === 'chat' || TYPE === 'gifts') {
+      const wrap = document.querySelector('.overlay-wrap');
+      const feed = document.getElementById('feed');
+      if (wrap) {
+        wrap.style.justifyContent = 'flex-start';
+        wrap.style.alignItems = 'center';
+        wrap.style.overflowY = 'auto';
+        wrap.style.pointerEvents = 'auto';
+      }
+      if (feed) {
+        feed.style.maxHeight = 'none';
+        feed.style.overflow = 'visible';
+      }
+    }
+    // Center the topgift wrap
+    const tgWrap = document.querySelector('.tg-wrap');
+    if (tgWrap) {
+      tgWrap.style.top = '50%';
+      tgWrap.style.left = '50%';
+      tgWrap.style.transform = 'translate(-50%, -50%)';
+    }
+    // Center the topstreak wrap
+    const tsWrap = document.querySelector('.ts-wrap');
+    if (tsWrap) {
+      tsWrap.style.top = '50%';
+      tsWrap.style.left = '50%';
+      tsWrap.style.transform = 'translate(-50%, -50%)';
+    }
+    // Center the leaderboard wrap
+    const pWrap = document.querySelector('.lb-wrap');
+    if (pWrap) {
+      pWrap.style.top = '50%';
+      pWrap.style.left = '50%';
+      pWrap.style.transform = 'translate(-50%, -50%)';
+    }
+  });
+}
+const filterCategories = (params.get('categories') || '').split(',').filter(Boolean);
+const filterMinGifter = parseInt(params.get('min_gifter_level') || '0');
+const filterMinMember = parseInt(params.get('min_member_level') || '0');
+const filterSearch = (params.get('search') || '').toLowerCase();
+const filterSort = params.get('sort') || 'none';
+const filterMinCoins = parseInt(params.get('min_coins') || '0');
+
+let lastCount = 0;
+let sfQueue = [];
+let sfShowing = false;
+let lastSfCount = 0;
+
+// ============ DATA FETCHING ============
+// Check for reset param
+const resetParam = params.get('reset');
+if (resetParam === 'true') {
+  // Clear the topgift state by reloading without the param
+  const cleanUrl = window.location.origin + window.location.pathname;
+  window.history.replaceState({}, '', cleanUrl);
+}
+
+async function fetchData() {
+  try {
+    const url = TYPE === 'chat' ? '/api/stats/chat'
+              : TYPE === 'gifts' ? '/api/stats/gifts'
+              : TYPE === 'follows' ? '/api/stats/follows'
+              : TYPE === 'topgift' ? '/api/stats/gifts?summary=topgift'
+              : TYPE === 'topstreak' ? '/api/stats/gifts?summary=topstreak'
+              : TYPE === 'topshowcase' ? '/api/stats/gifts?summary=topshowcase'
+              : TYPE === 'song' ? '/api/stats/song'
+              : TYPE === 'coingoal' ? '/api/stats/coingoal'
+              : TYPE === 'topgifter' ? '/api/stats/topgifter'
+              : TYPE === 'giftgoal' ? '/api/stats/giftgoal'
+              : TYPE === 'roulette' ? '/api/stats/roulette'
+              : TYPE === 'oneblock' ? 'http://127.0.0.1:5943/oneblock'
+              : '/api/stats/superfan';
+    const requestUrl = TYPE === 'coingoal'
+      ? url + (url.includes('?') ? '&' : '?') + '_=' + Date.now()
+      : TYPE === 'roulette'
+      ? url + (url.includes('?') ? '&' : '?') + '_=' + Date.now()
+      : url;
+    const res = await fetch(requestUrl, TYPE === 'coingoal' || TYPE === 'roulette' ? { cache: 'no-store' } : undefined);
+    const data = await res.json();
+    if (TYPE === 'superfan') handleSuperfan(data);
+    else if (TYPE === 'topgift') handleTopGift(data);
+    else if (TYPE === 'topstreak') handleTopStreak(data);
+    else if (TYPE === 'topshowcase') handleTopShowcase(data);
+    else if (TYPE === 'song') handleSong(data);
+    else if (TYPE === 'coingoal') handleCoinGoal(data);
+    else if (TYPE === 'topgifter') handleTopGifter(data);
+    else if (TYPE === 'giftgoal') handleGiftGoal(data);
+    else if (TYPE === 'roulette') handleRoulette(data);
+    else if (TYPE === 'oneblock') renderOneBlock(data);
+    else renderEntries(data);
+  } catch(e) {}
+}
+
+function obShortBlock(id) {
+  if (!id) return 'unknown';
+  return String(id).replace(/^minecraft:/, '').replace(/_/g, ' ');
+}
+
+function obSafeNumber(value, fallback) {
+  if (fallback === undefined) fallback = 0;
+  var n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function renderOneBlock(data) {
+  var wrap = document.getElementById('ob-wrap');
+  if (!wrap) return;
+
+  if (!data || !data.ok || !Array.isArray(data.oneblocks) || data.oneblocks.length === 0) {
+    wrap.classList.remove('ob-visible');
+    wrap.setAttribute('aria-hidden', 'true');
+    return;
+  }
+
+  var ob = data.oneblocks[0];
+  var phaseName = ob.phase_name || ob.phase_id || 'Unknown Phase';
+  var mined = obSafeNumber(ob.blocks_mined_in_phase);
+  var total = obSafeNumber(ob.phase_count);
+  var left = obSafeNumber(ob.blocks_needed_to_next_phase != null ? ob.blocks_needed_to_next_phase : ob.blocks_left);
+  var totalMined = obSafeNumber(ob.blocks_mined_total != null ? ob.blocks_mined_total : ob.counter);
+  var rawPct = obSafeNumber(ob.phase_progress_percent, -1);
+  var pct = rawPct >= 0 ? rawPct : (total > 0 ? (mined / total) * 100 : 0);
+  pct = Math.max(0, Math.min(100, pct));
+
+  document.getElementById('ob-phase').textContent = phaseName;
+  document.getElementById('ob-progress-fill').style.width = pct.toFixed(0) + '%';
+  document.getElementById('ob-progress-text').textContent = mined + ' / ' + total + ' mined';
+  document.getElementById('ob-left').textContent = left + ' blocks';
+  document.getElementById('ob-total').textContent = String(totalMined);
+  document.getElementById('ob-block').textContent = obShortBlock(ob.current_block);
+
+  wrap.classList.add('ob-visible');
+  wrap.setAttribute('aria-hidden', 'false');
+}
+
+
+function getChatTierMeta(tierClass) {
+  if (tierClass === 'tier-4') return { key: 'legend', label: 'LEGEND' };
+  if (tierClass === 'tier-3') return { key: 'gold', label: 'GOLD' };
+  if (tierClass === 'tier-2') return { key: 'amethyst', label: 'AMETHYST' };
+  if (tierClass === 'tier-1') return { key: 'iron', label: 'IRON' };
+  return null;
+}
+
+// ============ CHAT RENDERING (matches dashboard exactly) ============
+function renderChatEntry(entry) {
+  const level = entry.gifter_level || 0;
+  let tierClass = '';
+  if (level >= 35) tierClass = 'tier-4';
+  else if (level >= 30) tierClass = 'tier-3';
+  else if (level >= 25) tierClass = 'tier-2';
+  else if (level >= 20) tierClass = 'tier-1';
+
+  const initial = (entry.nick || '?').charAt(0).toUpperCase();
+  const tags = entry.tags || '';
+  const tierMeta = getChatTierMeta(tierClass);
+  const tierChip = tierMeta ? `<span class="chat-tier-chip chat-tier-chip-${tierMeta.key}">${tierMeta.label}</span>` : '';
+  const tagBadge = tags ? `<span class="chat-tag-chip">${esc(tags)}</span>` : '';
+  const avatarHtml = entry.avatar_url
+    ? `<img src="${entry.avatar_url}" alt="${entry.nick}" onerror="this.style.display='none'">`
+    : initial;
+
+  // Badges
+  let badgesHtml = '';
+  if (entry.badges && entry.badges.length > 0) {
+    // Badge display name mapping for cleaner fallbacks
+    const badgeNameMap = { 'RANK_LIST': 'Top Gifter', 'FANS': 'Fan', 'USER_GRADE': 'Lv' };
+    badgesHtml = entry.badges.map(b => {
+      // Skip badges with no icon AND no level_text — nothing meaningful to show
+      if (!b.icon && !b.level_text) return '';
+      const title = b.level_text ? `${b.type} Lv.${b.level_text}` : b.type;
+      function argbToRgba(argb) {
+        if (!argb || argb.length < 9) return argb;
+        const a = parseInt(argb.slice(1,3),16)/255;
+        const r = parseInt(argb.slice(3,5),16);
+        const g = parseInt(argb.slice(5,7),16);
+        const bl = parseInt(argb.slice(7,9),16);
+        return `rgba(${r},${g},${bl},${a.toFixed(2)})`;
+      }
+      const bgStyle = b.bg_color ? `background:${argbToRgba(b.bg_color)};` : '';
+      const borderStyle = b.border_color ? `border:1px solid ${argbToRgba(b.border_color)};` : '';
+      if (b.icon && b.level_text) {
+        return `<span class="user-badge-combined" title="${title}" style="${bgStyle}${borderStyle}"><img src="${b.icon}" alt="${b.type}" class="user-badge-icon" onerror="this.style.display='none'"><span class="user-badge-level">${b.level_text}</span></span>`;
+      } else if (b.icon) {
+        return `<img src="${b.icon}" alt="${b.type}" title="${title}" class="user-badge-icon" onerror="this.style.display='none'">`;
+      } else if (b.level_text) {
+        return `<span class="user-badge-combined" title="${title}" style="${bgStyle}${borderStyle}"><span class="user-badge-level">${b.level_text}</span></span>`;
+      } else if (b.type) {
+        const display = badgeNameMap[b.type] || b.type;
+        return `<span class="user-badge-text" title="${title}">${display}</span>`;
+      }
+      return '';
+    }).join('');
+  }
+
+  // Pixel tier accents are CSS-driven for readability/performance; no random sparkle spam.
+  let sparklesHtml = '';
+
+  const div = document.createElement('div');
+  div.className = `ticker-entry comment ${tierClass}`;
+  div.setAttribute('data-nick', entry.nick || '');
+  div.setAttribute('data-comment', entry.comment || '');
+  div.setAttribute('data-unique-id', entry.unique_id || '');
+  div.setAttribute('data-tags', entry.tags || '');
+  div.setAttribute('data-gifter-level', entry.gifter_level || 0);
+  div.setAttribute('data-member-level', entry.member_level || 0);
+
+  div.innerHTML = `
+    ${sparklesHtml}
+    <div class="ticker-avatar">${avatarHtml}</div>
+    <div class="ticker-info">
+      <div class="ticker-user">${badgesHtml}${tierChip}<span class="tier-nick">${esc(entry.nick||'Unknown')}</span>${tagBadge}</div>
+      <div class="ticker-action">${esc(entry.comment||'')}</div>
+    </div>
+    <span class="ticker-time" style="font-size:10px;opacity:0.5;">@${esc(entry.unique_id||'?')}</span>
+  `;
+  return div;
+}
+
+// ============ GIFT RENDERING ============
+function renderGiftEntry(entry) {
+  const tier = entry.tier || 1;
+  const div = document.createElement('div');
+  div.className = `gift-log-entry gift-tier-${tier}`;
+  div.setAttribute('data-sender', entry.sender || '');
+  div.setAttribute('data-gift-name', entry.gift_name || '');
+  div.setAttribute('data-gift-id', entry.gift_id || '');
+  div.setAttribute('data-coins', entry.total_coins || 0);
+  div.innerHTML = `
+    <img src="${entry.icon||''}" class="gift-icon" alt="${esc(entry.gift_name)}" onerror="this.style.display='none'">
+    <div class="gift-info">
+      <div class="gift-name">${esc(entry.gift_name)} <span class="gift-id">#${entry.gift_id}</span></div>
+      <div class="gift-meta"><span class="gift-sender">${esc(entry.sender)}</span> sent ${entry.repeat_count||1}x = <strong>${entry.total_coins||0}</strong> coins</div>
+    </div>`;
+  return div;
+}
+
+// ============ FOLLOW RENDERING ============
+function renderFollowEntry(entry) {
+  const div = document.createElement('div');
+  div.className = 'follow-log-entry';
+  const avatarHtml = entry.avatar_url ? `
+    <div class="follow-avatar">
+      <img src="${entry.avatar_url}" alt="${esc(entry.nick)}" onerror="this.parentElement.remove();">
+    </div>` : '';
+  div.innerHTML = `
+    ${avatarHtml}
+    <div class="follow-info">
+      <div class="follow-nick">${esc(entry.nick || 'Someone')}</div>
+      <div class="follow-id"><span class="follow-unique">@${esc(entry.unique_id||'unknown')}</span> started following</div>
+    </div>`;
+  return div;
+}
+
+
+function chatEntryMatchesOverlayFilters(entryOrEl) {
+  const getVal = (key, attr) => {
+    if (entryOrEl && typeof entryOrEl.getAttribute === 'function') return entryOrEl.getAttribute(attr) || '';
+    return entryOrEl && entryOrEl[key] != null ? String(entryOrEl[key]) : '';
+  };
+
+  if (filterCategories.length > 0) {
+    const tags = getVal('tags', 'data-tags').toLowerCase();
+    const tagList = tags.split(',').map(t => t.trim()).filter(Boolean);
+    const hasMatch = filterCategories.some(c => tagList.includes(String(c).toLowerCase()));
+    if (!hasMatch) return false;
+  }
+  if (filterMinGifter > 0) {
+    const gl = parseInt(getVal('gifter_level', 'data-gifter-level') || '0');
+    if (gl < filterMinGifter) return false;
+  }
+  if (filterMinMember > 0) {
+    const ml = parseInt(getVal('member_level', 'data-member-level') || '0');
+    if (ml < filterMinMember) return false;
+  }
+  return true;
+}
+
+// ============ RENDER + FILTER ============
+function renderEntries(entries) {
+  const container = document.getElementById('feed');
+  if (!container || !entries) return;
+  if (lastCount > entries.length) { lastCount = 0; container.innerHTML = ''; }
+  const rawNewEntries = entries.slice(lastCount);
+  const newEntries = TYPE === 'chat' ? rawNewEntries.filter(chatEntryMatchesOverlayFilters) : rawNewEntries;
+  if (rawNewEntries.length === 0) return;
+  const empty = container.querySelector('.ticker-empty');
+  if (empty) empty.remove();
+
+  newEntries.forEach(entry => {
+    let el;
+    if (TYPE === 'chat') el = renderChatEntry(entry);
+    else if (TYPE === 'gifts') el = renderGiftEntry(entry);
+    else if (TYPE === 'follows') el = renderFollowEntry(entry);
+    if (el) container.appendChild(el);
+  });
+  lastCount = entries.length;
+
+  // Trim old entries BEFORE sort — trim by chronological age, not coin value
+  const MAX_CHAT = 8, MAX_GIFTS = 999999, MAX_FOLLOWS = 5;
+  const max = TYPE === 'chat' ? MAX_CHAT : TYPE === 'gifts' ? MAX_GIFTS : MAX_FOLLOWS;
+  while (container.children.length > max) {
+    container.removeChild(container.firstElementChild);
+  }
+
+  // Auto-scroll (chat, gifts, follows all scroll down)
+  if (TYPE === 'chat' || TYPE === 'gifts' || TYPE === 'follows') {
+    container.scrollTop = container.scrollHeight;
+  }
+
+  // Apply filters (including sort)
+  applyFilters(container);
+}
+
+function applyFilters(container) {
+  if (TYPE === 'chat') {
+    container.querySelectorAll('.ticker-entry').forEach(el => {
+      const show = chatEntryMatchesOverlayFilters(el);
+      el.classList.toggle('filtered-out', !show);
+    });
+  } else if (TYPE === 'gifts') {
+    // Search filter
+    if (filterSearch) {
+      container.querySelectorAll('.gift-log-entry').forEach(el => {
+        const sender = (el.getAttribute('data-sender')||'').toLowerCase();
+        const name = (el.getAttribute('data-gift-name')||'').toLowerCase();
+        const id = (el.getAttribute('data-gift-id')||'').toLowerCase();
+        const match = sender.includes(filterSearch) || name.includes(filterSearch) || id.includes(filterSearch);
+        el.classList.toggle('filtered-out', !match);
+      });
+    }
+    // Min coins filter
+    if (filterMinCoins > 0) {
+      container.querySelectorAll('.gift-log-entry').forEach(el => {
+        const coins = parseInt(el.getAttribute('data-coins')||'0');
+        if (coins < filterMinCoins) el.classList.add('filtered-out');
+      });
+    }
+    // Sort
+    if (filterSort !== 'none') {
+      const entries = Array.from(container.querySelectorAll('.gift-log-entry'));
+      entries.sort((a,b) => {
+        const ca = parseInt(a.dataset.coins||'0'), cb = parseInt(b.dataset.coins||'0');
+        return filterSort === 'high' ? cb-ca : ca-cb;
+      });
+      entries.forEach(e => container.appendChild(e));
+    }
+  }
+}
+
+// ============ SUPERFAN ============
+function handleSuperfan(entries) {
+  if (!entries || entries.length === 0) return;
+  if (lastSfCount > entries.length) lastSfCount = 0;
+  const newEntries = entries.slice(lastSfCount)
+    .filter(e => (e.event_type || e.type || '') === 'new_superfan');
+  newEntries.forEach(e => sfQueue.push(e));
+  lastSfCount = entries.length;
+  if (!sfShowing) processSfQueue();
+}
+
+function processSfQueue() {
+  if (sfQueue.length === 0) { sfShowing = false; return; }
+  sfShowing = true;
+  const entry = sfQueue.shift();
+  showSuperfan(entry.nick || entry.user || 'Someone');
+}
+
+function showSuperfan(name) {
+  const overlay = document.getElementById('sf-overlay');
+  const nameEl = document.getElementById('sf-name');
+  overlay.classList.remove('fade-out');
+  overlay.classList.add('visible');
+  nameEl.textContent = name;
+  createSparkles();
+  createStars();
+  setTimeout(() => {
+    overlay.classList.remove('visible');
+    overlay.classList.add('fade-out');
+    setTimeout(() => processSfQueue(), 800);
+  }, 6000);
+}
+
+function createSparkles() {
+  const c = document.getElementById('sf-sparkles');
+  c.innerHTML = '';
+  const colors = ['#ff004f','#00f2ea','#fbbf24','#a855f7','#3ba55c','#5865f2'];
+  for (let i=0;i<30;i++){
+    const s = document.createElement('div');
+    s.className = 'sf-sparkle';
+    s.style.left = Math.random()*100+'%';
+    s.style.top = (40+Math.random()*40)+'%';
+    s.style.background = colors[Math.floor(Math.random()*colors.length)];
+    s.style.animationDelay = (Math.random()*3)+'s';
+    const size = (4+Math.random()*6)+'px';
+    s.style.width = size; s.style.height = size;
+    c.appendChild(s);
+  }
+}
+
+function createStars() {
+  const o = document.getElementById('sf-overlay');
+  o.querySelectorAll('.floating-star').forEach(s=>s.remove());
+  const stars = ['⭐','🌟','✨','💫','⚡'];
+  for (let i=0;i<8;i++){
+    const s = document.createElement('div');
+    s.className = 'floating-star';
+    s.textContent = stars[Math.floor(Math.random()*stars.length)];
+    s.style.left = (10+Math.random()*80)+'%';
+    s.style.top = (30+Math.random()*40)+'%';
+    s.style.animationDelay = (Math.random()*2)+'s';
+    s.style.fontSize = (18+Math.random()*20)+'px';
+    o.appendChild(s);
+  }
+}
+
+function esc(str) { const d=document.createElement('div'); d.textContent=str; return d.innerHTML; }
+
+// ============ TOP GIFT HANDLER ============
+let currentTopDiamond = 0;
+let lastBurstDiamond = 0;
+let tgSparklesCreated = false;
+let tgCurrentMediaKey = '';
+let tgAnimState = null;
+let tgRenderedKey = '';
+const tgFailedAssets = new Set();
+
+function tgStopGiftMedia() {
+  if (tgAnimState && tgAnimState.raf) cancelAnimationFrame(tgAnimState.raf);
+  if (tgAnimState && tgAnimState.video) {
+    try { tgAnimState.video.pause(); } catch (_) {}
+    tgAnimState.video.removeAttribute('src');
+    try { tgAnimState.video.load(); } catch (_) {}
+  }
+  tgAnimState = null;
+}
+
+function tgSetFallbackIcon(iconUrl) {
+  const iconWrap = document.getElementById('tg-icon-wrap');
+  const card = document.getElementById('tg-card');
+  if (!iconWrap) return;
+  if (card) card.classList.remove('tg-has-anim');
+  const key = 'icon:' + (iconUrl || 'fallback');
+  if (tgCurrentMediaKey === key) return;
+  tgStopGiftMedia();
+  tgCurrentMediaKey = key;
+  iconWrap.innerHTML = '';
+  if (iconUrl) {
+    const img = document.createElement('img');
+    img.className = 'tg-icon-img';
+    img.alt = 'Gift';
+    img.src = iconUrl;
+    img.onerror = () => { iconWrap.innerHTML = '<div class="tg-icon-ph">🎁</div>'; };
+    iconWrap.appendChild(img);
+  } else {
+    iconWrap.innerHTML = '<div class="tg-icon-ph">🎁</div>';
+  }
+}
+
+function tgRenderGiftMedia(top, diamondVal) {
+  const iconWrap = document.getElementById('tg-icon-wrap');
+  const card = document.getElementById('tg-card');
+  if (!iconWrap) return;
+  const assetUrl = top && top.asset_url ? String(top.asset_url) : '';
+  const iconUrl = top && top.icon ? String(top.icon) : '';
+  // Dashboard preview uses static media; never start the CPU-heavy packed-alpha compositor there.
+  if (isPreview) {
+    tgSetFallbackIcon(iconUrl);
+    return;
+  }
+  if (!assetUrl || diamondVal < 100 || /\.json(\?|$)/i.test(assetUrl) || tgFailedAssets.has(assetUrl)) {
+    tgSetFallbackIcon(iconUrl);
+    return;
+  }
+
+  const key = 'asset:' + assetUrl;
+  if (tgCurrentMediaKey === key) {
+    if (card) card.classList.add('tg-has-anim');
+    return;
+  }
+  tgStopGiftMedia();
+  tgCurrentMediaKey = key;
+  if (card) card.classList.add('tg-has-anim');
+  iconWrap.innerHTML = '';
+
+  const video = document.createElement('video');
+  video.muted = true;
+  video.loop = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  video.style.display = 'none';
+
+  const canvas = document.createElement('canvas');
+  canvas.className = 'tg-anim-canvas';
+  canvas.width = 128;
+  canvas.height = 96;
+  iconWrap.appendChild(canvas);
+  iconWrap.appendChild(video);
+
+  const fallback = () => {
+    tgFailedAssets.add(assetUrl);
+    tgSetFallbackIcon(iconUrl);
+  };
+  video.onerror = fallback;
+
+  video.onloadedmetadata = () => {
+    const vw = video.videoWidth || 0;
+    const vh = video.videoHeight || 0;
+    if (!vw || !vh) { fallback(); return; }
+
+    // TikTok gift ZIP bundles commonly pack RGB on the left half and alpha
+    // matte on the right half. Portrait gifts are often 1440x1280
+    // (720x1280 RGB + 720x1280 alpha), so ratio-only >=1.5 misses them.
+    const isPackedAlpha = (vw % 2 === 0) && (vw >= vh * 0.9);
+    if (!isPackedAlpha) {
+      tgStopGiftMedia();
+      tgCurrentMediaKey = key;
+      iconWrap.innerHTML = '';
+      video.className = 'tg-anim-video';
+      video.style.display = '';
+      iconWrap.appendChild(video);
+      video.play().catch(fallback);
+      tgAnimState = { video, raf: 0 };
+      return;
+    }
+
+    const srcW = Math.floor(vw / 2);
+    const srcH = vh;
+    const outW = 128;
+    const outH = 96;
+    const workW = 220;
+    const workH = Math.max(1, Math.round(workW * (srcH / srcW)));
+    canvas.width = outW;
+    canvas.height = outH;
+
+    const out = canvas.getContext('2d', { willReadFrequently: true });
+    const rgbCanvas = document.createElement('canvas');
+    const alphaCanvas = document.createElement('canvas');
+    const maskOutCanvas = document.createElement('canvas');
+    rgbCanvas.width = alphaCanvas.width = workW;
+    rgbCanvas.height = alphaCanvas.height = workH;
+    maskOutCanvas.width = outW;
+    maskOutCanvas.height = outH;
+    const rgb = rgbCanvas.getContext('2d', { willReadFrequently: true });
+    const alpha = alphaCanvas.getContext('2d', { willReadFrequently: true });
+    const maskOut = maskOutCanvas.getContext('2d', { willReadFrequently: true });
+    const state = {
+      video,
+      raf: 0,
+      crop: null,
+      cropLearning: true,
+      lastCropSampleBucket: -1,
+      lastVideoTime: -1,
+      lastDrawAt: 0,
+    };
+    tgAnimState = state;
+
+    const findMaskBox = (mask) => {
+      let x1 = workW, y1 = workH, x2 = 0, y2 = 0;
+      for (let y = 0; y < workH; y++) {
+        const row = y * workW * 4;
+        for (let x = 0; x < workW; x++) {
+          const i = row + x * 4;
+          const a = Math.max(mask[i], mask[i + 1], mask[i + 2]);
+          if (a > 8) {
+            if (x < x1) x1 = x;
+            if (y < y1) y1 = y;
+            if (x + 1 > x2) x2 = x + 1;
+            if (y + 1 > y2) y2 = y + 1;
+          }
+        }
+      }
+      if (x2 <= x1 || y2 <= y1) return null;
+      const padX = Math.max(8, Math.round((x2 - x1) * 0.08));
+      const padY = Math.max(8, Math.round((y2 - y1) * 0.10));
+      return {
+        x1: Math.max(0, x1 - padX),
+        y1: Math.max(0, y1 - padY),
+        x2: Math.min(workW, x2 + padX),
+        y2: Math.min(workH, y2 + padY),
+      };
+    };
+
+    const draw = (now) => {
+      if (tgAnimState !== state || video.paused || video.ended) return;
+      if (now - state.lastDrawAt < PACKED_ALPHA_FRAME_MS) {
+        state.raf = requestAnimationFrame(draw);
+        return;
+      }
+      state.lastDrawAt = now;
+      try {
+        rgb.clearRect(0, 0, workW, workH);
+        alpha.clearRect(0, 0, workW, workH);
+        out.clearRect(0, 0, outW, outH);
+        maskOut.clearRect(0, 0, outW, outH);
+        rgb.drawImage(video, 0, 0, srcW, srcH, 0, 0, workW, workH);
+        alpha.drawImage(video, srcW, 0, srcW, srcH, 0, 0, workW, workH);
+        // Freeze only after the video has wrapped once. Sampling sparsely across
+        // that first full loop keeps the CPU budget bounded while including gifts
+        // that begin at the bottom and expand upward later in their animation.
+        if (state.cropLearning && state.lastVideoTime >= 0 && video.currentTime + 0.05 < state.lastVideoTime) {
+          state.cropLearning = false;
+        }
+        state.lastVideoTime = video.currentTime;
+        const sampleBucket = Math.floor((video.currentTime * 1000) / PACKED_ALPHA_CROP_SAMPLE_MS);
+        if (state.cropLearning && sampleBucket !== state.lastCropSampleBucket) {
+          state.lastCropSampleBucket = sampleBucket;
+          const mask = alpha.getImageData(0, 0, workW, workH).data;
+          const box = findMaskBox(mask);
+          if (box) {
+            state.crop = !state.crop ? box : {
+              x1: Math.min(state.crop.x1, box.x1),
+              y1: Math.min(state.crop.y1, box.y1),
+              x2: Math.max(state.crop.x2, box.x2),
+              y2: Math.max(state.crop.y2, box.y2),
+            };
+          }
+        }
+        const c = state.crop;
+        if (!c) {
+          state.raf = requestAnimationFrame(draw);
+          return;
+        }
+        const cropW = Math.max(1, c.x2 - c.x1);
+        const cropH = Math.max(1, c.y2 - c.y1);
+        // Contain the complete learned gift bounds. The old cover-style scale
+        // deliberately overflowed the canvas and clipped tall gifts at the top.
+        // Keep bottom anchoring for compact assets, but never exceed the canvas.
+        const scale = Math.min(outW / cropW, outH / cropH);
+        const drawW = Math.max(1, Math.round(cropW * scale));
+        const drawH = Math.max(1, Math.round(cropH * scale));
+        const dx = Math.round((outW - drawW) / 2);
+        const dy = Math.round(outH - drawH);
+
+        out.drawImage(rgbCanvas, c.x1, c.y1, cropW, cropH, dx, dy, drawW, drawH);
+        maskOut.drawImage(alphaCanvas, c.x1, c.y1, cropW, cropH, dx, dy, drawW, drawH);
+        const frame = out.getImageData(0, 0, outW, outH);
+        const alphaFrame = maskOut.getImageData(0, 0, outW, outH).data;
+        const data = frame.data;
+        for (let i = 0; i < data.length; i += 4) {
+          data[i + 3] = Math.max(alphaFrame[i], alphaFrame[i + 1], alphaFrame[i + 2]);
+        }
+        out.putImageData(frame, 0, 0);
+      } catch (e) {
+        fallback();
+        return;
+      }
+      state.raf = requestAnimationFrame(draw);
+    };
+
+    video.play().then(() => {
+      state.raf = requestAnimationFrame(draw);
+    }).catch(fallback);
+  };
+
+  video.src = assetUrl;
+}
+
+let tgLayout = 'left';  // Default layout, updated from payload {topgift: {...}, layout: '...'}
+
+function handleTopGift(data) {
+  // Data now arrives as {topgift: {...}, layout: 'left'/'center'/'right'} instead of array
+  if (!data || typeof data !== 'object') return;
+  const gifts = (Array.isArray(data)) ? data : (data.topgift ? [data.topgift] : []);
+  if (gifts.length === 0) return;
+  
+  // Apply the dashboard-chosen layout
+  const newLayout = String(data.layout || 'left').toLowerCase();
+  const valid = {'left':1,'center':1,'right':1};
+  if (valid[newLayout]) {
+    tgLayout = newLayout;
+    document.body.setAttribute('data-tglayout', tgLayout);
+  } else {
+    document.body.removeAttribute('data-tglayout');
+    tgLayout = 'left';
+  }
+  
+  // Find the gift with the highest single-gift value (diamond_count), not total coins
+  const top = gifts.reduce((max, g) => {
+    const val = g.diamond_count || (g.total_coins && g.repeat_count ? Math.round(g.total_coins / g.repeat_count) : 0);
+    const maxVal = max.diamond_count || (max.total_coins && max.repeat_count ? Math.round(max.total_coins / max.repeat_count) : 0);
+    return val >= maxVal ? g : max;
+  }, gifts[0]);
+  const diamondVal = top.diamond_count || (top.total_coins && top.repeat_count ? Math.round(top.total_coins / top.repeat_count) : 0);
+  if (diamondVal < currentTopDiamond && currentTopDiamond > 0) return;
+  const isNewCrown = diamondVal > lastBurstDiamond && lastBurstDiamond > 0;
+  currentTopDiamond = diamondVal;
+  const renderKey = [top.asset_key || '', top.gift_id || '', top.sender || '', top.gift_name || '', diamondVal, top.repeat_count || 0, top.icon || '', top.asset_url || ''].join('\u001f');
+  // Polling is intentionally frequent for live updates, but a static leader
+  // must not rebuild DOM or start a 40-tick counter animation every poll.
+  if (renderKey === tgRenderedKey) return;
+  tgRenderedKey = renderKey;
+
+  // Show the card
+  const card = document.getElementById('tg-card');
+  card.style.display = '';
+  // After entrance animation ends, disable it to prevent re-triggering on DOM updates
+  if (!card._animListenerSet) {
+    card.addEventListener('animationend', function(e) {
+      if (e.animationName === 'tgCardIn') {
+        card.style.animation = 'none';
+      }
+    });
+    card._animListenerSet = true;
+  }
+
+  document.getElementById('tg-sender').textContent = top.sender || 'Unknown';
+  document.getElementById('tg-gift-name').textContent = top.gift_name || 'Gift';
+  tgRenderGiftMedia(top, diamondVal);
+  tgAnimateCoins(diamondVal);
+  if (isNewCrown) {
+    lastBurstDiamond = diamondVal;
+    tgTriggerBurst();
+    card.classList.remove('tg-new-crown');
+    void card.offsetWidth;
+    card.classList.add('tg-new-crown');
+  }
+  if (!tgSparklesCreated) { tgCreateSparkles(); tgSparklesCreated = true; }
+}
+
+function tgAnimateCoins(target) {
+  const el = document.getElementById('tg-coin-count');
+  const current = parseInt(el.textContent.replace(/,/g, '')) || 0;
+  const diff = target - current;
+  let step = 0;
+  const interval = setInterval(() => {
+    step++;
+    el.textContent = Math.round(current + (diff * (step / 40))).toLocaleString();
+    if (step >= 40) clearInterval(interval);
+  }, 25);
+}
+
+function tgTriggerBurst() {
+  const burst = document.getElementById('tg-burst');
+  burst.innerHTML = '';
+  burst.classList.remove('active');
+  void burst.offsetWidth;
+  burst.classList.add('active');
+  const colors = ['#ff004f','#fbbf24','#00f2ea','#a855f7','#ff69b4','#fff'];
+  for (let i = 0; i < 20; i++) {
+    const p = document.createElement('div');
+    p.className = 'tg-burst-p';
+    const angle = (i / 20) * Math.PI * 2;
+    const dist = 60 + Math.random() * 120;
+    const size = 3 + Math.random() * 6;
+    p.style.cssText = 'width:'+size+'px;height:'+size+'px;background:'+colors[i%colors.length]+';transform:translate(-50%,-50%);transition:all 0.7s cubic-bezier(0.25,0.46,0.45,0.94);';
+    burst.appendChild(p);
+    requestAnimationFrame(() => {
+      p.style.transform = 'translate(calc(-50% + '+(Math.cos(angle)*dist)+'px), calc(-50% + '+(Math.sin(angle)*dist)+'px))';
+      p.style.opacity = '0';
+    });
+  }
+}
+
+function tgCreateSparkles() {
+  const wrap = document.getElementById('tg-sparkles');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const colors = ['#ff004f','#fbbf24','#00f2ea','#a855f7','#ff69b4'];
+  for (let i = 0; i < 15; i++) {
+    const s = document.createElement('div');
+    s.className = 'tg-sparkle';
+    const size = 3 + Math.random() * 6;
+    s.style.cssText = 'width:'+size+'px;height:'+size+'px;left:'+(Math.random()*100)+'%;top:'+(20+Math.random()*60)+'%;background:'+colors[i%colors.length]+';animation-delay:'+(i*0.4)+'s;animation-duration:'+(3+Math.random()*3)+'s;';
+    wrap.appendChild(s);
+  }
+}
+
+
+// ============ TOP GIFT RESET ============
+function resetTopGift() {
+  currentTopDiamond = 0;
+  lastBurstDiamond = 0;
+  const card = document.getElementById('tg-card');
+  if (card) card.style.display = 'none';
+  document.getElementById('tg-sender').textContent = '\u2014';
+  document.getElementById('tg-gift-name').textContent = 'Waiting for gifts...';
+  tgStopGiftMedia();
+  tgCurrentMediaKey = '';
+  tgRenderedKey = '';
+  const iconWrap = document.getElementById('tg-icon-wrap');
+  iconWrap.innerHTML = '<div class="tg-icon-ph">🎁</div>';
+  document.getElementById('tg-coin-count').textContent = '0';
+}
+
+// ============ TOP STREAK HANDLER ============
+let currentTopStreak = 0;
+let lastBurstStreak = 0;
+let tsSparklesCreated = false;
+let tsRenderedKey = '';
+let tsLayout = 'left';  // Default layout, updated from payload {entries: [...], layout: '...'}
+
+function handleTopStreak(gifts) {
+  // Data arrives as {entries: [...], layout: 'left'/'center'/'right'} from summary=topstreak,
+  // or a bare array from the showcase handoff / older callers.
+  if (!gifts) return;
+  if (!Array.isArray(gifts)) {
+    const newLayout = String(gifts.layout || '').toLowerCase();
+    const validLayouts = {'left':1,'center':1,'right':1};
+    if (validLayouts[newLayout]) {
+      tsLayout = newLayout;
+      document.body.setAttribute('data-tslayout', tsLayout);
+    } else {
+      document.body.removeAttribute('data-tslayout');
+      tsLayout = 'left';
+    }
+    gifts = Array.isArray(gifts.entries) ? gifts.entries : [];
+  }
+  if (gifts.length === 0) return;
+  // Find the gift with the highest repeat_count (longest streak)
+  const top = gifts.reduce((max, g) => {
+    return (g.repeat_count || 0) >= (max.repeat_count || 0) ? g : max;
+  }, gifts[0]);
+  const streak = top.repeat_count || 0;
+  if (streak <= 1) return; // No meaningful streak
+  if (streak < currentTopStreak && currentTopStreak > 0) return;
+  const isNewStreak = streak > lastBurstStreak && lastBurstStreak > 0;
+  currentTopStreak = streak;
+  const renderKey = [top.asset_key || '', top.gift_id || '', top.sender || '', top.gift_name || '', streak, top.icon || ''].join('\u001f');
+  // Same input means this is only the periodic poll, not a new visual state.
+  if (renderKey === tsRenderedKey) return;
+  tsRenderedKey = renderKey;
+
+  // Show the card
+  const card = document.getElementById('ts-card');
+  card.style.display = '';
+  // After entrance animation ends, disable it to prevent re-triggering on DOM updates
+  if (!card._animListenerSet) {
+    card.addEventListener('animationend', function(e) {
+      if (e.animationName === 'tsCardIn') {
+        card.style.animation = 'none';
+      }
+    });
+    card._animListenerSet = true;
+  }
+
+  document.getElementById('ts-sender').textContent = top.sender || 'Unknown';
+  document.getElementById('ts-gift-name').textContent = top.gift_name || 'Gift';
+  const iconWrap = document.getElementById('ts-icon-wrap');
+  if (top.icon) {
+    iconWrap.innerHTML = '<img src="' + top.icon + '" class="ts-icon-img" onerror="this.parentElement.innerHTML=\'<div class=ts-icon-ph>🔥</div>\'">';
+  } else {
+    iconWrap.innerHTML = '<div class="ts-icon-ph">🔥</div>';
+  }
+  tsAnimateStreak(streak);
+  if (isNewStreak) {
+    lastBurstStreak = streak;
+    tsTriggerBurst();
+    card.classList.remove('ts-new-streak');
+    void card.offsetWidth;
+    card.classList.add('ts-new-streak');
+  }
+  if (!tsSparklesCreated) { tsCreateSparkles(); tsSparklesCreated = true; }
+}
+
+function tsAnimateStreak(target) {
+  const el = document.getElementById('ts-streak-count');
+  const current = parseInt(el.textContent.replace(/,/g, '')) || 0;
+  const diff = target - current;
+  let step = 0;
+  const interval = setInterval(() => {
+    step++;
+    el.textContent = Math.round(current + (diff * (step / 40))).toLocaleString();
+    if (step >= 40) clearInterval(interval);
+  }, 25);
+}
+
+function tsTriggerBurst() {
+  const burst = document.getElementById('ts-burst');
+  burst.innerHTML = '';
+  burst.classList.remove('active');
+  void burst.offsetWidth;
+  burst.classList.add('active');
+  const colors = ['#fbbf24','#ff004f','#a855f7','#00f2ea','#ff69b4','#fff'];
+  for (let i = 0; i < 20; i++) {
+    const p = document.createElement('div');
+    p.className = 'ts-burst-p';
+    const angle = (i / 20) * Math.PI * 2;
+    const dist = 60 + Math.random() * 120;
+    const size = 3 + Math.random() * 6;
+    p.style.cssText = 'width:'+size+'px;height:'+size+'px;background:'+colors[i%colors.length]+';transform:translate(-50%,-50%);transition:all 0.7s cubic-bezier(0.25,0.46,0.45,0.94);';
+    burst.appendChild(p);
+    requestAnimationFrame(() => {
+      p.style.transform = 'translate(calc(-50% + '+(Math.cos(angle)*dist)+'px), calc(-50% + '+(Math.sin(angle)*dist)+'px))';
+      p.style.opacity = '0';
+    });
+  }
+}
+
+function tsCreateSparkles() {
+  const wrap = document.getElementById('ts-sparkles');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const colors = ['#fbbf24','#ff004f','#a855f7','#00f2ea','#ff69b4'];
+  for (let i = 0; i < 15; i++) {
+    const s = document.createElement('div');
+    s.className = 'ts-sparkle';
+    const size = 3 + Math.random() * 6;
+    s.style.cssText = 'width:'+size+'px;height:'+size+'px;left:'+(Math.random()*100)+'%;top:'+(20+Math.random()*60)+'%;background:'+colors[i%colors.length]+';animation-delay:'+(i*0.4)+'s;animation-duration:'+(3+Math.random()*3)+'s;';
+    wrap.appendChild(s);
+  }
+}
+
+// ============ TOP STREAK RESET ============
+function resetTopStreak() {
+  currentTopStreak = 0;
+  lastBurstStreak = 0;
+  tsRenderedKey = '';
+  const card = document.getElementById('ts-card');
+  if (card) card.style.display = 'none';
+  document.getElementById('ts-sender').textContent = '\u2014';
+  document.getElementById('ts-gift-name').textContent = 'Waiting for streaks...';
+  const iconWrap = document.getElementById('ts-icon-wrap');
+  iconWrap.innerHTML = '<div class="ts-icon-ph">🔥</div>';
+  document.getElementById('ts-streak-count').textContent = '0';
+}
+
+// ============ TOP SHOWCASE (TOP GIFT + TOP STREAK) ============
+const TOP_SHOWCASE_SWITCH_MS = 5000;
+let showcaseCurrent = null;
+let showcaseAvailable = { gift: false, streak: false };
+let showcaseTimer = null;
+
+function showcaseSwitchTo(next) {
+  if (!showcaseAvailable[next]) return;
+  if (showcaseCurrent === next) return;
+  const incoming = document.getElementById(next === 'gift' ? 'showcase-gift-slot' : 'showcase-streak-slot');
+  const outgoing = showcaseCurrent
+    ? document.getElementById(showcaseCurrent === 'gift' ? 'showcase-gift-slot' : 'showcase-streak-slot')
+    : null;
+  if (!incoming) return;
+
+  if (outgoing) {
+    outgoing.classList.remove('is-active');
+    outgoing.classList.add('is-leaving');
+    outgoing.setAttribute('aria-hidden', 'true');
+    setTimeout(() => outgoing.classList.remove('is-leaving'), 760);
+  }
+  incoming.classList.remove('is-leaving');
+  // Let the outgoing card begin its restrained drift before the successor lands.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    incoming.classList.add('is-active');
+    incoming.setAttribute('aria-hidden', 'false');
+  }));
+  showcaseCurrent = next;
+}
+
+function showcaseTick() {
+  if (showcaseAvailable.gift && showcaseAvailable.streak) {
+    const next = showcaseCurrent === 'gift' ? 'streak' : 'gift';
+    showcaseSwitchTo(next);
+  } else if (showcaseAvailable.gift) {
+    showcaseSwitchTo('gift');
+  } else if (showcaseAvailable.streak) {
+    showcaseSwitchTo('streak');
+  }
+}
+
+function handleTopShowcase(data) {
+  const gift = data && data.topgift ? data.topgift : null;
+  const streak = data && data.topstreak && (data.topstreak.repeat_count || 0) > 1 ? data.topstreak : null;
+  showcaseAvailable = { gift: !!gift, streak: !!streak };
+
+  if (gift) handleTopGift({ topgift: gift, layout: (data && data.layout) || undefined });
+  if (streak) handleTopStreak({ entries: [streak], layout: (data && data.layout) || undefined });
+
+  if (!showcaseCurrent || !showcaseAvailable[showcaseCurrent]) showcaseTick();
+  if (!showcaseTimer && (showcaseAvailable.gift || showcaseAvailable.streak)) {
+    showcaseTimer = setInterval(showcaseTick, TOP_SHOWCASE_SWITCH_MS);
+  }
+}
+
+// ============ SONG REQUEST OVERLAY ============
+let songProgressBaseMs = 0;
+let songDurationMs = 0;
+let songProgressSyncedAt = Date.now();
+let songIsPlaying = false;
+let lastSyncedTrackId = null;
+let lastSyncedIsPlaying = null;
+let lastSyncedProgressMs = 0;
+
+// ============ SONG FEEDBACK TOAST QUEUE ============
+const feedbackQueue = [];
+const feedbackSeen = new Set();
+let feedbackShowing = false;
+const FEEDBACK_BASE_DURATION = 3500;  // 3.5s per toast
+const FEEDBACK_FAST_DURATION = 2500;  // 2.5s when 3+ queued
+const FEEDBACK_GAP = 200;             // 200ms between toasts
+const FEEDBACK_MAX_QUEUE = 6;
+
+function fmtFeedback(text) {
+  // Escape HTML first, then highlight @usernames and !commands
+  let s = esc(text);
+  s = s.replace(/(@\w+)/g, '<span class="song-feedback-user">$1</span>');
+  s = s.replace(/(!\w+)/g, '<span class="song-feedback-cmd">$1</span>');
+  return s;
+}
+
+function processFeedbackQueue() {
+  if (feedbackShowing || feedbackQueue.length === 0) return;
+  feedbackShowing = true;
+
+  const item = feedbackQueue.shift();
+  const wrap = document.getElementById('song-feedback-wrap');
+  if (!wrap) { feedbackShowing = false; return; }
+
+  // Create toast element
+  const toast = document.createElement('div');
+  toast.className = `song-feedback-toast type-${item.type}`;
+  toast.innerHTML = `
+    <span class="song-feedback-icon">${item.icon}</span>
+    <div class="song-feedback-body">
+      <div class="song-feedback-title">${fmtFeedback(item.title)}</div>
+      ${item.detail ? `<div class="song-feedback-detail">${fmtFeedback(item.detail)}</div>` : ''}
+    </div>
+  `;
+  wrap.appendChild(toast);
+
+  // Duration: shorten if queue is backing up
+  const duration = feedbackQueue.length >= 3 ? FEEDBACK_FAST_DURATION : FEEDBACK_BASE_DURATION;
+
+  setTimeout(() => {
+    toast.classList.add('toast-exit');
+    setTimeout(() => {
+      toast.remove();
+      feedbackShowing = false;
+      // Process next in queue after gap
+      setTimeout(processFeedbackQueue, FEEDBACK_GAP);
+    }, 300); // match CSS exit animation duration
+  }, duration);
+}
+
+function enqueueFeedback(entries) {
+  if (!entries || entries.length === 0) return;
+  entries.forEach(item => {
+    const key = item.timestamp + ':' + item.title;
+    if (feedbackSeen.has(key)) return; // skip duplicate
+    feedbackSeen.add(key);
+    if (feedbackQueue.length >= FEEDBACK_MAX_QUEUE) {
+      feedbackQueue.shift(); // drop oldest
+    }
+    feedbackQueue.push(item);
+  });
+  // Clean old seen keys (older than 10s)
+  if (feedbackSeen.size > 50) {
+    const cutoff = Date.now() / 1000 - 10;
+    for (const k of feedbackSeen) {
+      const ts = parseFloat(k.split(':')[0]);
+      if (ts < cutoff) feedbackSeen.delete(k);
+    }
+  }
+  processFeedbackQueue();
+}
+
+function syncSongProgress(progressMs, durationMs, isPlaying) {
+  songProgressBaseMs = Number(progressMs || 0);
+  songDurationMs = Number(durationMs || 0);
+  songProgressSyncedAt = Date.now();
+  songIsPlaying = Boolean(isPlaying);
+  updateSongProgressDisplay();
+}
+
+function getSongProgressNow() {
+  if (!songIsPlaying) return songProgressBaseMs;
+  return Math.min(songDurationMs || songProgressBaseMs, songProgressBaseMs + (Date.now() - songProgressSyncedAt));
+}
+
+function updateSongProgressDisplay() {
+  const progressEl = document.getElementById('song-now-progress');
+  const fillEl = document.getElementById('song-progress-fill');
+  const currentEl = document.getElementById('song-progress-current');
+  const totalEl = document.getElementById('song-progress-total');
+  if (!progressEl || progressEl.style.display === 'none' || !songDurationMs) return;
+  const progress = getSongProgressNow();
+  const pct = songDurationMs > 0 ? (progress / songDurationMs) * 100 : 0;
+  fillEl.style.width = Math.min(pct, 100) + '%';
+  currentEl.textContent = formatDuration(progress);
+  totalEl.textContent = formatDuration(songDurationMs);
+}
+
+function handleSong(data) {
+  // Process feedback toasts FIRST (runs every poll cycle)
+  if (data.feedback && data.feedback.length > 0) {
+    enqueueFeedback(data.feedback);
+  }
+
+  const card = document.getElementById('song-card');
+  const idle = document.getElementById('song-idle');
+
+  const spotifyPlaying = data.spotify_playing;
+  const nowPlaying = data.now_playing;
+  const upcoming = data.upcoming || [];
+
+  // Detect song ended: Spotify reports a track but it's not playing
+  const spotifyEnded = spotifyPlaying && !data.is_playing && !nowPlaying;
+
+  const hasAnyData = (spotifyPlaying && !spotifyEnded) || nowPlaying || upcoming.length > 0;
+
+  // Remember if card was hidden BEFORE we modify it
+  const cardWasHidden = card.style.display === 'none';
+
+  if (!hasAnyData) {
+    card.style.display = 'none';
+    card.style.animation = 'none';
+    idle.style.display = 'none';
+    songIsPlaying = false;
+    lastSyncedIsPlaying = false;
+    lastSyncedTrackId = null;
+    lastSyncedProgressMs = 0;
+    return;
+  }
+
+  if (cardWasHidden) {
+    card.style.display = '';
+    card.style.animation = 'none';
+    void card.offsetWidth;
+    card.style.animation = 'songCardIn 0.5s cubic-bezier(0.34,1.56,0.64,1)';
+  } else {
+    card.style.display = '';
+  }
+  idle.style.display = 'none';
+  // NOW PLAYING
+  const nowSection = document.getElementById('song-now-section');
+  if ((spotifyPlaying && !spotifyEnded) || nowPlaying) {
+    nowSection.style.display = 'flex';
+    const album = document.getElementById('song-now-album');
+    const albumImg = spotifyPlaying?.album_image || nowPlaying?.album_image || '';
+    if (albumImg) {
+      album.innerHTML = '<img src="' + albumImg + '" alt="" class="song-album-img">';
+    } else {
+      album.innerHTML = '<div class="song-album-ph"><i class="fa-solid fa-music"></i></div>';
+    }
+    document.getElementById('song-now-title').textContent = spotifyPlaying?.name || nowPlaying?.track_name || '\u2014';
+    document.getElementById('song-now-artist').textContent = spotifyPlaying?.artists || nowPlaying?.artist || '\u2014';
+
+    const progressEl = document.getElementById('song-now-progress');
+    const trackId = spotifyPlaying?.id || nowPlaying?.uri || null;
+    const isPlayingNow = !!(data.is_playing && spotifyPlaying?.duration_ms);
+    const serverProgressMs = data.progress_ms || 0;
+
+    // Detect seek: server progress jumped significantly from last synced position
+    // (catches fast-forwards, rewinds, and repeat-same-track)
+    const progressJump = Math.abs(serverProgressMs - lastSyncedProgressMs);
+    const userSeeked = isPlayingNow && progressJump > 5000;
+
+    // Re-sync when:
+    // 1. Track changed
+    // 2. Play/pause state flipped
+    // 3. Card just re-appeared after being hidden
+    // 4. User seeked/jumped (>5s change)
+    const mustSync = cardWasHidden ||
+                     (trackId !== lastSyncedTrackId) ||
+                     (isPlayingNow !== lastSyncedIsPlaying) ||
+                     userSeeked;
+
+    if (isPlayingNow) {
+      progressEl.style.display = 'flex';
+      if (mustSync) {
+        syncSongProgress(serverProgressMs, spotifyPlaying.duration_ms, true);
+        lastSyncedTrackId = trackId;
+        lastSyncedIsPlaying = true;
+        lastSyncedProgressMs = serverProgressMs;
+      }
+    } else {
+      progressEl.style.display = 'none';
+      if (mustSync) {
+        syncSongProgress(serverProgressMs, spotifyPlaying?.duration_ms || 0, false);
+        lastSyncedTrackId = trackId;
+        lastSyncedIsPlaying = false;
+        lastSyncedProgressMs = serverProgressMs;
+      }
+      songIsPlaying = false;
+    }
+  } else {
+    nowSection.style.display = 'flex';
+    document.getElementById('song-now-album').innerHTML = '<div class="song-album-ph"><i class="fa-solid fa-music"></i></div>';
+    document.getElementById('song-now-title').textContent = 'Waiting for next song...';
+    document.getElementById('song-now-artist').textContent = '';
+    document.getElementById('song-now-progress').style.display = 'none';
+    songIsPlaying = false;
+    lastSyncedIsPlaying = false;
+    lastSyncedTrackId = null;
+    lastSyncedProgressMs = 0;
+  }
+
+  // UP NEXT
+  const nextSection = document.getElementById('song-next-section');
+  if (upcoming.length > 0) {
+    nextSection.style.display = 'block';
+    const list = document.getElementById('song-upcoming-list');
+    list.innerHTML = upcoming.map((s, i) =>
+      '<div class="song-upcoming-item">' +
+        '<span class="song-upcoming-num">' + (i + 1) + '</span>' +
+        '<span class="song-upcoming-name">' + esc(s.track_name) + ' \u2014 ' + esc(s.artist) + '</span>' +
+        '<span class="song-upcoming-by">' + esc(s.requested_by) + '</span>' +
+      '</div>'
+    ).join('');
+  } else {
+    nextSection.style.display = 'none';
+  }
+}
+
+function formatDuration(ms) {
+  if (!ms) return '0:00';
+  const total = Math.floor(ms / 1000);
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
+  return mins + ':' + (secs < 10 ? '0' : '') + secs;
+}
+
+// ============ COIN GOAL JAR ============
+let cgState = { current: 0, goal: 10000, label: 'Tip Jar', sublabel: '' };
+let cgDisplayed = 0;          // animated counter value
+let cgFillRatio = 0;          // animated fill 0..1 (eased toward target)
+let cgTargetRatio = 0;        // target fill from current/goal
+let cgCoins = [];             // active falling-coin particles
+let cgSettled = [];           // settled coins baked positions
+let cgCanvas, cgCtx, cgSprite;
+let cgDirty = true;           // render only when something changes
+let cgRaf = null;
+let cgInitDone = false;
+let cgLastCurrent = null;
+let cgComplete = false;
+const CG_MAX_COINS = 600;     // hard cap (GPT advisor) — never exceed
+const CG_W = 240, CG_H = 300;
+// Jar interior box (inside the pixel walls)
+const CG_JAR = { x: 38, y: 70, w: 164, h: 210 };
+
+function cgBuildSprite() {
+  // Pre-render one pixel-art coin to an offscreen canvas (DeepSeek advisor:
+  // sprite cache — blit instead of redrawing vector each frame).
+  const s = document.createElement('canvas');
+  s.width = 12; s.height = 12;
+  const c = s.getContext('2d');
+  // body
+  c.fillStyle = '#ffcc00'; c.fillRect(2, 1, 8, 10);
+  c.fillStyle = '#ffe066'; c.fillRect(3, 2, 6, 3);   // highlight
+  c.fillStyle = '#e6a700'; c.fillRect(2, 8, 8, 3);   // shadow
+  c.fillStyle = '#b87f00'; c.fillRect(1, 3, 1, 6); c.fillRect(10, 3, 1, 6); // edges
+  c.fillStyle = '#5a3e1b'; c.fillRect(5, 4, 2, 4);   // mark
+  cgSprite = s;
+}
+
+function cgInitCanvas() {
+  cgCanvas = document.getElementById('cg-canvas');
+  if (!cgCanvas) return;
+  cgCtx = cgCanvas.getContext('2d');
+  cgCtx.imageSmoothingEnabled = false;
+  cgBuildSprite();
+  cgInitDone = true;
+}
+
+function cgScheduleRender() {
+  // The jar must not own a permanent browser frame loop while its value is idle.
+  if (cgRaf === null) cgRaf = requestAnimationFrame(cgRender);
+}
+
+function cgSpawnCoins(n) {
+  // Spawn up to n falling coins at the jar mouth (capped by pool size).
+  const room = CG_MAX_COINS - (cgCoins.length + cgSettled.length);
+  n = Math.max(0, Math.min(n, room));
+  for (let i = 0; i < n; i++) {
+    cgCoins.push({
+      x: CG_JAR.x + 12 + Math.random() * (CG_JAR.w - 24),
+      y: CG_JAR.y - 10 - Math.random() * 30,
+      vy: 1 + Math.random() * 1.5,
+      vx: (Math.random() - 0.5) * 0.6,
+      rot: Math.random() * 6,
+    });
+  }
+  cgDirty = true;
+  cgScheduleRender();
+}
+
+function cgFillLevelY() {
+  // Y of the current liquid/coin surface inside the jar (lower y = higher fill)
+  return CG_JAR.y + CG_JAR.h - (cgFillRatio * CG_JAR.h);
+}
+
+function cgRender() {
+  // Clear the scheduler token first; another frame is requested only while
+  // fill/coin physics is still moving. Idle jars therefore consume no frames.
+  cgRaf = null;
+  if (!cgInitDone) return;
+
+  let keepAnimating = false;
+  // Ease the fill ratio toward target
+  const dr = cgTargetRatio - cgFillRatio;
+  if (Math.abs(dr) > 0.0008) {
+    cgFillRatio += dr * 0.08;
+    cgDirty = true;
+    keepAnimating = true;
+  } else {
+    cgFillRatio = cgTargetRatio;
+  }
+
+  // Physics for falling coins
+  const surfaceY = cgFillLevelY();
+  if (cgCoins.length) {
+    cgDirty = true;
+    keepAnimating = true;
+    for (let i = cgCoins.length - 1; i >= 0; i--) {
+      const co = cgCoins[i];
+      co.vy += 0.18;              // gravity
+      co.y += co.vy; co.x += co.vx;
+      if (co.x < CG_JAR.x + 4) { co.x = CG_JAR.x + 4; co.vx *= -0.4; }
+      if (co.x > CG_JAR.x + CG_JAR.w - 12) { co.x = CG_JAR.x + CG_JAR.w - 12; co.vx *= -0.4; }
+      // settle when reaching the coin surface or floor
+      if (co.y >= surfaceY - 6 || co.y >= CG_JAR.y + CG_JAR.h - 12) {
+        cgSettled.push({ x: co.x, y: Math.min(co.y, CG_JAR.y + CG_JAR.h - 12), rot: co.rot });
+        cgCoins.splice(i, 1);
+        if (cgSettled.length > CG_MAX_COINS) cgSettled.shift();
+      }
+    }
+  }
+
+  if (!cgDirty) return;
+  cgDirty = false;
+
+  const ctx = cgCtx;
+  ctx.clearRect(0, 0, CG_W, CG_H);
+
+  // --- coin fill body (clipped to jar interior) ---
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(CG_JAR.x, CG_JAR.y, CG_JAR.w, CG_JAR.h);
+  ctx.clip();
+
+  // base gold fill up to surface
+  const top = cgFillLevelY();
+  const grad = ctx.createLinearGradient(0, top, 0, CG_JAR.y + CG_JAR.h);
+  grad.addColorStop(0, '#ffd83a');
+  grad.addColorStop(1, '#e08a00');
+  ctx.fillStyle = grad;
+  ctx.fillRect(CG_JAR.x, top, CG_JAR.w, CG_JAR.h - (top - CG_JAR.y));
+
+  // settled coin texture (blit cached sprite)
+  if (cgSprite) {
+    for (let i = 0; i < cgSettled.length; i++) {
+      const c = cgSettled[i];
+      ctx.drawImage(cgSprite, c.x | 0, c.y | 0);
+    }
+    // falling coins
+    for (let i = 0; i < cgCoins.length; i++) {
+      const c = cgCoins[i];
+      ctx.drawImage(cgSprite, c.x | 0, c.y | 0);
+    }
+  }
+  // surface shimmer line
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.fillRect(CG_JAR.x, top, CG_JAR.w, 2);
+  ctx.restore();
+
+  // --- pixel glass jar frame (drawn over fill) ---
+  cgDrawJarFrame(ctx);
+
+  if (keepAnimating) cgScheduleRender();
+}
+
+function cgDrawJarFrame(ctx) {
+  // Pixel-art glass jar — palette + structure ported from Gemini's design.
+  // Coins fill the body interior (CG_JAR); this draws the glass over them.
+  const x = CG_JAR.x, y = CG_JAR.y, w = CG_JAR.w, h = CG_JAR.h;
+  // Gemini palette
+  const LID    = '#7b9ad0';   // periwinkle slate-blue lid
+  const BODY   = '#a0dcf0';   // pastel sky-blue glass
+  const HILITE = '#e3f5f8';   // near-white ice-blue gloss
+  const SHADOW = '#89c4d7';   // muted teal-blue depth/base
+  const px = 8;               // wall/edge band thickness (pixel chunk)
+
+  // --- glass side walls framing the coin column ---
+  // left highlight band (light reflection)
+  ctx.fillStyle = HILITE;
+  ctx.fillRect(x - px, y, px, h);
+  // a thin inner gloss strip just inside the left wall
+  ctx.fillRect(x + 4, y + 10, 6, h - 40);
+  // right shadow band (teal depth)
+  ctx.fillStyle = SHADOW;
+  ctx.fillRect(x + w, y, px, h);
+  // body-tone trims top edge of the glass walls
+  ctx.fillStyle = BODY;
+  ctx.fillRect(x - px, y - 4, px, 4);
+
+  // --- shoulder row (steps in above body) ---
+  ctx.fillStyle = BODY;
+  ctx.fillRect(x + 6, y - 14, w - 12, 14);
+  ctx.fillStyle = SHADOW;                       // shoulder right shadow
+  ctx.fillRect(x + w - 22, y - 14, 16, 14);
+
+  // --- neck (narrower than body) ---
+  const neckW = w - 56, nx = x + 28, neckY = y - 30;
+  ctx.fillStyle = BODY;
+  ctx.fillRect(nx, neckY, neckW, 16);
+  ctx.fillStyle = SHADOW;                       // neck right shadow
+  ctx.fillRect(nx + neckW - 14, neckY, 14, 16);
+
+  // --- lid (periwinkle, wider than neck) ---
+  const lidW = w - 28, lx = x + 14, lidY = neckY - 16;
+  ctx.fillStyle = LID;
+  ctx.fillRect(lx, lidY, lidW, 16);
+
+  // --- base (narrower than body, teal) ---
+  const baseW = w - 36, bx = x + 18, baseY = y + h;
+  ctx.fillStyle = SHADOW;
+  ctx.fillRect(bx, baseY, baseW, 16);
+}
+
+function cgAnimateCount(target) {
+  const el = document.getElementById('cg-current');
+  if (!el) return;
+  const start = cgDisplayed, diff = target - start;
+  const dur = Math.min(900, Math.max(400, Math.abs(diff) * 0.6));
+  const t0 = performance.now();
+  function step(now) {
+    const t = Math.min((now - t0) / dur, 1);
+    const e = 1 - Math.pow(1 - t, 3);
+    cgDisplayed = start + diff * e;
+    el.innerText = Math.round(cgDisplayed).toLocaleString();
+    if (t < 1) requestAnimationFrame(step);
+    else { cgDisplayed = target; el.innerText = target.toLocaleString(); }
+  }
+  requestAnimationFrame(step);
+}
+
+function cgPulseActivity() {
+  // Keep the shimmer as a short event acknowledgement, not a permanent GPU animation.
+  const shine = document.querySelector('.cg-shine');
+  if (!shine) return;
+  shine.classList.remove('cg-active');
+  void shine.offsetWidth;
+  shine.classList.add('cg-active');
+}
+
+function handleCoinGoal(data) {
+  if (!data || typeof data !== 'object') return;
+  const wrap = document.getElementById('cg-wrap');
+  if (!cgInitDone) cgInitCanvas();
+
+  cgState = {
+    current: Math.max(0, parseInt(data.current) || 0),
+    goal: Math.max(1, parseInt(data.goal) || 10000),
+    label: (data.label || 'Tip Jar').toString(),
+    sublabel: (data.sublabel || '').toString(),
+  };
+
+  // Show the jar once we have state
+  if (wrap) wrap.style.display = 'flex';
+
+  // Label + goal text
+  const labelEl = document.getElementById('cg-label');
+  const goalEl = document.getElementById('cg-goal');
+  const subEl = document.getElementById('cg-sublabel');
+  if (labelEl) labelEl.innerText = cgState.label;
+  if (goalEl) goalEl.innerText = cgState.goal.toLocaleString();
+  if (subEl) { subEl.innerText = cgState.sublabel; subEl.style.display = cgState.sublabel ? 'block' : 'none'; }
+
+  // Update target fill. A goal edit can change the canvas even when the
+  // current amount did not, so wake the renderer only for that real change.
+  const nextTargetRatio = Math.min(1, cgState.current / cgState.goal);
+  if (Math.abs(nextTargetRatio - cgTargetRatio) > 0.0008) cgDirty = true;
+  cgTargetRatio = nextTargetRatio;
+
+  // First load: snap settled coins to match current fill (no rain of 1000s)
+  if (cgLastCurrent === null) {
+    cgFillRatio = cgTargetRatio;
+    cgDisplayed = cgState.current;
+    const el = document.getElementById('cg-current');
+    if (el) el.innerText = cgState.current.toLocaleString();
+    cgDirty = true;
+  } else if (cgState.current > cgLastCurrent) {
+    // Coins arrived — animate count + spawn a few falling coins (visual only)
+    cgAnimateCount(cgState.current);
+    const el = document.getElementById('cg-current');
+    if (el) { el.classList.remove('cg-pop'); void el.offsetWidth; el.classList.add('cg-pop'); }
+    const delta = cgState.current - cgLastCurrent;
+    // scale visual coins to delta but cap (don't dump 5000 sprites)
+    cgSpawnCoins(Math.min(40, Math.max(3, Math.round(delta / 5))));
+  } else if (cgState.current !== cgLastCurrent) {
+    // Manual set down/reset — just animate counter + reset coins to fill level
+    cgAnimateCount(cgState.current);
+    cgSettled = []; cgCoins = []; cgDirty = true;
+  }
+  const valueChanged = cgLastCurrent !== null && cgState.current !== cgLastCurrent;
+  cgLastCurrent = cgState.current;
+  if (cgDirty) cgScheduleRender();
+  if (valueChanged) cgPulseActivity();
+
+  // Goal reached celebration toggle
+  const nowComplete = cgState.current >= cgState.goal;
+  if (nowComplete !== cgComplete) {
+    cgComplete = nowComplete;
+    if (wrap) wrap.classList.toggle('cg-complete', cgComplete);
+  }
+}
+
+// ============ GIFT GOAL OVERLAY ============
+let ggDisplayed = 0;
+function ggAnimateCount(target) {
+  const el = document.getElementById('gg-current');
+  if (!el) return;
+  const start = ggDisplayed, diff = target - start;
+  if (diff === 0) return;
+  const dur = Math.min(700, Math.max(300, Math.abs(diff) * 80));
+  const t0 = performance.now();
+  function step(now) {
+    const t = Math.min((now - t0) / dur, 1);
+    const e = 1 - Math.pow(1 - t, 3);
+    ggDisplayed = start + diff * e;
+    el.innerText = Math.round(ggDisplayed);
+    if (t < 1) requestAnimationFrame(step);
+    else { ggDisplayed = target; el.innerText = target; }
+  }
+  requestAnimationFrame(step);
+}
+
+let ggCurrentMediaKey = '';
+let ggAnimState = null;
+const ggFailedAssets = new Set();
+
+function ggStopGiftMedia() {
+  if (ggAnimState && ggAnimState.raf) cancelAnimationFrame(ggAnimState.raf);
+  if (ggAnimState && ggAnimState.video) {
+    try { ggAnimState.video.pause(); } catch (_) {}
+    ggAnimState.video.removeAttribute('src');
+    try { ggAnimState.video.load(); } catch (_) {}
+  }
+  ggAnimState = null;
+}
+
+function ggSetFallbackIcon(iconUrl) {
+  const wrap = document.getElementById('gg-wrap');
+  const iconWrap = wrap ? wrap.querySelector('.gg-icon-wrap') : null;
+  if (!iconWrap) return;
+  if (wrap) wrap.classList.remove('gg-has-anim');
+  const key = 'icon:' + (iconUrl || 'fallback');
+  if (ggCurrentMediaKey === key) return;
+  ggStopGiftMedia();
+  ggCurrentMediaKey = key;
+  iconWrap.innerHTML = '';
+  if (iconUrl) {
+    const img = document.createElement('img');
+    img.className = 'gg-icon';
+    img.alt = 'Gift';
+    img.src = iconUrl;
+    img.onerror = () => { iconWrap.innerHTML = '<div class="gg-icon-ph"><i class="fa-solid fa-gift"></i></div>'; };
+    iconWrap.appendChild(img);
+  } else {
+    iconWrap.innerHTML = '<div class="gg-icon-ph"><i class="fa-solid fa-gift"></i></div>';
+  }
+}
+
+function ggRenderGiftMedia(data) {
+  const wrap = document.getElementById('gg-wrap');
+  const iconWrap = wrap ? wrap.querySelector('.gg-icon-wrap') : null;
+  if (!iconWrap) return;
+  const assetUrl = data && data.gift_asset_url ? String(data.gift_asset_url) : '';
+  const iconUrl = data && data.gift_icon ? String(data.gift_icon) : '';
+  // Dashboard preview uses static media; never start the CPU-heavy packed-alpha compositor there.
+  if (isPreview) {
+    ggSetFallbackIcon(iconUrl);
+    return;
+  }
+  if (!assetUrl || /\.json(\?|$)/i.test(assetUrl) || ggFailedAssets.has(assetUrl)) {
+    ggSetFallbackIcon(iconUrl);
+    return;
+  }
+
+  const key = 'asset:' + assetUrl;
+  if (ggCurrentMediaKey === key) {
+    if (wrap) wrap.classList.add('gg-has-anim');
+    return;
+  }
+  ggStopGiftMedia();
+  ggCurrentMediaKey = key;
+  if (wrap) wrap.classList.add('gg-has-anim');
+  iconWrap.innerHTML = '';
+
+  const video = document.createElement('video');
+  video.muted = true;
+  video.loop = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  video.style.display = 'none';
+
+  const canvas = document.createElement('canvas');
+  canvas.className = 'gg-anim-canvas';
+  canvas.width = 128;
+  canvas.height = 128;
+  iconWrap.appendChild(canvas);
+  iconWrap.appendChild(video);
+
+  const fallback = () => {
+    ggFailedAssets.add(assetUrl);
+    ggSetFallbackIcon(iconUrl);
+  };
+  video.onerror = fallback;
+
+  video.onloadedmetadata = () => {
+    const vw = video.videoWidth || 0;
+    const vh = video.videoHeight || 0;
+    if (!vw || !vh) { fallback(); return; }
+
+    // TikTok high-value gifts can be RGB+alpha packed side-by-side.
+    const isPackedAlpha = (vw % 2 === 0) && (vw >= vh * 0.9);
+    if (!isPackedAlpha) {
+      ggStopGiftMedia();
+      ggCurrentMediaKey = key;
+      iconWrap.innerHTML = '';
+      video.className = 'gg-anim-video';
+      video.style.display = '';
+      iconWrap.appendChild(video);
+      video.play().catch(fallback);
+      ggAnimState = { video, raf: 0 };
+      return;
+    }
+
+    const srcW = Math.floor(vw / 2);
+    const srcH = vh;
+    const outW = 128;
+    const outH = 128;
+    const workW = 220;
+    const workH = Math.max(1, Math.round(workW * (srcH / srcW)));
+    canvas.width = outW;
+    canvas.height = outH;
+
+    const out = canvas.getContext('2d', { willReadFrequently: true });
+    const rgbCanvas = document.createElement('canvas');
+    const alphaCanvas = document.createElement('canvas');
+    const maskOutCanvas = document.createElement('canvas');
+    rgbCanvas.width = alphaCanvas.width = workW;
+    rgbCanvas.height = alphaCanvas.height = workH;
+    maskOutCanvas.width = outW;
+    maskOutCanvas.height = outH;
+    const rgb = rgbCanvas.getContext('2d', { willReadFrequently: true });
+    const alpha = alphaCanvas.getContext('2d', { willReadFrequently: true });
+    const maskOut = maskOutCanvas.getContext('2d', { willReadFrequently: true });
+    const state = {
+      video,
+      raf: 0,
+      crop: null,
+      cropLearning: true,
+      lastCropSampleBucket: -1,
+      lastVideoTime: -1,
+      lastDrawAt: 0,
+    };
+    ggAnimState = state;
+
+    const findMaskBox = (mask) => {
+      let x1 = workW, y1 = workH, x2 = 0, y2 = 0;
+      for (let y = 0; y < workH; y++) {
+        const row = y * workW * 4;
+        for (let x = 0; x < workW; x++) {
+          const i = row + x * 4;
+          const a = Math.max(mask[i], mask[i + 1], mask[i + 2]);
+          if (a > 8) {
+            if (x < x1) x1 = x;
+            if (y < y1) y1 = y;
+            if (x + 1 > x2) x2 = x + 1;
+            if (y + 1 > y2) y2 = y + 1;
+          }
+        }
+      }
+      if (x2 <= x1 || y2 <= y1) return null;
+      const padX = Math.max(8, Math.round((x2 - x1) * 0.08));
+      const padY = Math.max(8, Math.round((y2 - y1) * 0.10));
+      return {
+        x1: Math.max(0, x1 - padX),
+        y1: Math.max(0, y1 - padY),
+        x2: Math.min(workW, x2 + padX),
+        y2: Math.min(workH, y2 + padY),
+      };
+    };
+
+    const draw = (now) => {
+      if (ggAnimState !== state || video.paused || video.ended) return;
+      if (now - state.lastDrawAt < PACKED_ALPHA_FRAME_MS) {
+        state.raf = requestAnimationFrame(draw);
+        return;
+      }
+      state.lastDrawAt = now;
+      try {
+        rgb.clearRect(0, 0, workW, workH);
+        alpha.clearRect(0, 0, workW, workH);
+        out.clearRect(0, 0, outW, outH);
+        maskOut.clearRect(0, 0, outW, outH);
+        rgb.drawImage(video, 0, 0, srcW, srcH, 0, 0, workW, workH);
+        alpha.drawImage(video, srcW, 0, srcW, srcH, 0, 0, workW, workH);
+        if (state.cropLearning && state.lastVideoTime >= 0 && video.currentTime + 0.05 < state.lastVideoTime) {
+          state.cropLearning = false;
+        }
+        state.lastVideoTime = video.currentTime;
+        const sampleBucket = Math.floor((video.currentTime * 1000) / PACKED_ALPHA_CROP_SAMPLE_MS);
+        if (state.cropLearning && sampleBucket !== state.lastCropSampleBucket) {
+          state.lastCropSampleBucket = sampleBucket;
+          const mask = alpha.getImageData(0, 0, workW, workH).data;
+          const box = findMaskBox(mask);
+          if (box) {
+            state.crop = !state.crop ? box : {
+              x1: Math.min(state.crop.x1, box.x1),
+              y1: Math.min(state.crop.y1, box.y1),
+              x2: Math.max(state.crop.x2, box.x2),
+              y2: Math.max(state.crop.y2, box.y2),
+            };
+          }
+        }
+        const c = state.crop;
+        if (!c) {
+          state.raf = requestAnimationFrame(draw);
+          return;
+        }
+        const cropW = Math.max(1, c.x2 - c.x1);
+        const cropH = Math.max(1, c.y2 - c.y1);
+        const scale = Math.min(outW / cropW, outH / cropH);
+        const drawW = Math.max(1, Math.round(cropW * scale));
+        const drawH = Math.max(1, Math.round(cropH * scale));
+        const dx = Math.round((outW - drawW) / 2);
+        const dy = Math.round(outH - drawH);
+
+        out.drawImage(rgbCanvas, c.x1, c.y1, cropW, cropH, dx, dy, drawW, drawH);
+        maskOut.drawImage(alphaCanvas, c.x1, c.y1, cropW, cropH, dx, dy, drawW, drawH);
+        const frame = out.getImageData(0, 0, outW, outH);
+        const alphaFrame = maskOut.getImageData(0, 0, outW, outH).data;
+        const pixels = frame.data;
+        for (let i = 0; i < pixels.length; i += 4) {
+          pixels[i + 3] = Math.max(alphaFrame[i], alphaFrame[i + 1], alphaFrame[i + 2]);
+        }
+        out.putImageData(frame, 0, 0);
+      } catch (e) {
+        fallback();
+        return;
+      }
+      state.raf = requestAnimationFrame(draw);
+    };
+
+    video.play().then(() => {
+      state.raf = requestAnimationFrame(draw);
+    }).catch(fallback);
+  };
+
+  video.src = assetUrl;
+}
+
+function handleGiftGoal(data) {
+  if (!data || typeof data !== 'object') return;
+  const wrap = document.getElementById('gg-wrap');
+  if (!wrap) return;
+
+  const goal = Math.max(1, parseInt(data.goal) || 100);
+  const current = Math.max(0, parseInt(data.current) || 0);
+
+  wrap.style.display = 'flex';
+
+  // Header
+  const headerEl = document.getElementById('gg-header');
+  if (headerEl) headerEl.innerText = data.header || 'Goal Today';
+
+  // Goal text
+  const goalEl = document.getElementById('gg-goal');
+  if (goalEl) goalEl.innerText = goal;
+
+  // Gift media: animation when cached, static icon fallback.
+  ggRenderGiftMedia(data);
+
+  // Current counter (animate)
+  const currentEl = document.getElementById('gg-current');
+  if (currentEl) {
+    if (ggDisplayed === 0 && current > 0) {
+      ggDisplayed = current;
+      currentEl.innerText = current;
+    } else if (current !== ggDisplayed) {
+      ggAnimateCount(current);
+    }
+  }
+}
+
+// ============ TOP GIFT/LIKE LEADERBOARD (rotating list) ============
+// Rotates between Top Gifters (coins) and Top Likers (likes) every 5s.
+// Both boards come from /api/stats/topgifter as {gifters, likers} top-10,
+// plus live show_gift_amounts / show_like_amounts flags (dashboard toggles).
+let lbData = { gifters: [], likers: [] };
+let lbMode = 'gifters';              // active board
+let lbRenderedMode = '';             // last rendered board (rotation detection)
+let lbLastHash = '';
+// Amount visibility — populated from the poll payload each tick; defaults
+// false (hidden) so amounts stay off until the dashboard enables them.
+let lbShowAmounts = { show_gift_amounts: false, show_like_amounts: false };
+
+function lbRender() {
+  const wrap = document.getElementById('lb-wrap');
+  const list = document.getElementById('lb-list');
+  const tabG = document.getElementById('lb-tab-gifters');
+  const tabL = document.getElementById('lb-tab-likers');
+  if (!wrap || !list || !tabG || !tabL) return;
+
+  tabG.classList.toggle('active', lbMode === 'gifters');
+  tabL.classList.toggle('active', lbMode === 'likers');
+
+  const modeChanged = (lbRenderedMode !== lbMode);
+  lbRenderedMode = lbMode;
+
+  const entries = lbMode === 'gifters' ? lbData.gifters : lbData.likers;
+  const icon = lbMode === 'gifters' ? '🪙' : '❤️';
+  const scoreKey = lbMode === 'gifters' ? 'total_coins' : 'total_likes';
+
+  if (!Array.isArray(entries) || entries.length === 0) {
+    wrap.classList.remove('visible');
+    return;
+  }
+  wrap.classList.add('visible');
+
+  const rows = entries.slice(0, 10);
+
+  // Keyed reconciliation (2026-08-05 flicker fix): score-only updates patch
+  // existing rows IN PLACE — no DOM rebuild, so the lbRowIn entrance animation
+  // never replays on every like/coin tick. Only genuinely new rows and board
+  // rotations (modeChanged) get the staggered slide-in.
+  if (modeChanged) list.innerHTML = '';
+  while (list.children.length > rows.length) list.removeChild(list.lastChild);
+
+  rows.forEach((e, i) => {
+    const num = parseInt(e[scoreKey], 10) || 0;
+    
+    // Apply visibility from the live payload flags (both default OFF/hidden).
+    let showAmount = false;
+    if (lbMode === 'gifters') {
+      showAmount = !!lbShowAmounts.show_gift_amounts;
+    } else {
+      showAmount = !!lbShowAmounts.show_like_amounts;
+    }
+    const scoreHtml = showAmount 
+      ? '<span class="lb-score-icon">' + icon + '</span>' + num.toLocaleString()
+      : '';
+    const nick = e.nick || '???';
+
+    const row = list.children[i];
+    if (row) {
+      // Patch in place — no animation restart.
+      row.querySelector('.lb-rank').textContent = i + 1;
+      const nameEl = row.querySelector('.lb-name');
+      nameEl.textContent = nick;
+      nameEl.title = nick;
+      row.querySelector('.lb-score').innerHTML = scoreHtml;
+      lbPatchAvatar(row.querySelector('.lb-avatar'), e, i === 0);
+      return;
+    }
+
+    // Brand-new row — build once, animate entrance once.
+    const newRow = document.createElement('div');
+    newRow.className = 'lb-row lb-new';
+    newRow.style.animationDelay = (i * 0.04) + 's';
+
+    const rank = document.createElement('div');
+    rank.className = 'lb-rank';
+    rank.textContent = i + 1;
+
+    const avWrap = document.createElement('div');
+    avWrap.className = 'lb-avatar';
+    avWrap.style.position = 'relative';
+    lbPatchAvatar(avWrap, e, i === 0);
+
+    const name = document.createElement('div');
+    name.className = 'lb-name';
+    name.textContent = nick;
+    name.title = nick;
+
+    const score = document.createElement('div');
+    score.className = 'lb-score';
+    score.innerHTML = scoreHtml;
+
+    newRow.appendChild(rank);
+    newRow.appendChild(avWrap);
+    newRow.appendChild(name);
+    newRow.appendChild(score);
+    list.appendChild(newRow);
+  });
+}
+
+// Avatar subtree: pixel crown on rank 1 + initials fallback + img with
+// onload/onerror. Rebuilds only when the avatar_url identity changes;
+// otherwise just refreshes the initial letter.
+function lbPatchAvatar(avWrap, e, isTop) {
+  if (!avWrap) return;
+  const curCrown = avWrap.querySelector('.lb-crown');
+  if (isTop && !curCrown) {
+    const crown = document.createElement('div');
+    crown.className = 'lb-crown';
+    crown.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 8" style="width:26px;height:19px;shape-rendering:crispEdges;">'
+      + '<rect x="0" y="1" width="1" height="1" fill="#311405"/><rect x="5" y="0" width="1" height="1" fill="#311405"/><rect x="10" y="1" width="1" height="1" fill="#311405"/>'
+      + '<rect x="0" y="2" width="2" height="1" fill="#311405"/><rect x="4" y="1" width="3" height="1" fill="#f7d57c"/><rect x="9" y="2" width="2" height="1" fill="#311405"/>'
+      + '<rect x="0" y="3" width="11" height="1" fill="#f7d57c"/>'
+      + '<rect x="0" y="4" width="11" height="1" fill="#e5a93b"/>'
+      + '<rect x="0" y="5" width="1" height="1" fill="#311405"/><rect x="1" y="5" width="9" height="1" fill="#f7d57c"/><rect x="10" y="5" width="1" height="1" fill="#311405"/>'
+      + '<rect x="1" y="6" width="9" height="1" fill="#311405"/></svg>';
+    avWrap.insertBefore(crown, avWrap.firstChild);
+  } else if (!isTop && curCrown) {
+    curCrown.remove();
+  }
+
+  const want = e.avatar_url || '';
+  if (avWrap.getAttribute('data-avatar-key') === want) {
+    const fb = avWrap.querySelector('.lb-avatar-fb');
+    if (fb) fb.textContent = (e.nick || '?').charAt(0).toUpperCase();
+    return;
+  }
+  avWrap.setAttribute('data-avatar-key', want);
+  const oldImg = avWrap.querySelector('img');
+  if (oldImg) oldImg.remove();
+
+  const initial = (e.nick || '?').charAt(0).toUpperCase();
+  let fb = avWrap.querySelector('.lb-avatar-fb');
+  if (!fb) {
+    fb = document.createElement('div');
+    fb.className = 'lb-avatar-fb';
+    avWrap.appendChild(fb);
+  }
+  fb.textContent = initial;
+  fb.style.display = '';
+  if (want) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.onload = function() { fb.style.display = 'none'; };
+    img.onerror = function() { fb.style.display = ''; };
+    img.src = want;
+    avWrap.appendChild(img);
+  }
+}
+
+function handleTopGifter(data) {
+  // Accept the new {gifters, likers, show_gift_amounts, show_like_amounts}
+  // shape (dashboard reset returns [] mid-switch).
+  if (!data || typeof data !== 'object') return;
+  const gifters = Array.isArray(data.gifters) ? data.gifters : [];
+  const likers = Array.isArray(data.likers) ? data.likers : [];
+  const showGift = !!data.show_gift_amounts;
+  const showLike = !!data.show_like_amounts;
+  // Include the visibility flags in the hash so a dashboard toggle repaints
+  // even when the board data itself hasn't changed.
+  const hash = JSON.stringify([gifters, likers, showGift, showLike]);
+  if (hash === lbLastHash) return;   // no change; rotation timer drives redraws
+  lbLastHash = hash;
+  lbData = { gifters, likers };
+  lbShowAmounts = { show_gift_amounts: showGift, show_like_amounts: showLike };
+  lbRender();
+}
+
+// Rotate boards every 5 seconds (only when both have data; otherwise stick
+// to whichever board has entries so the overlay never goes blank on one side).
+setInterval(() => {
+  const hasG = lbData.gifters.length > 0;
+  const hasL = lbData.likers.length > 0;
+  if (hasG && hasL) {
+    lbMode = lbMode === 'gifters' ? 'likers' : 'gifters';
+  } else if (hasG) {
+    lbMode = 'gifters';
+  } else if (hasL) {
+    lbMode = 'likers';
+  }
+  lbRender();
+}, 5000);
+function escAttr(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ===== GIFT ROULETTE (one-transition slot strip) =====
+let rlCurrentSpinId = null;
+let rlHideTimer = null;
+let rlHideAnimTimer = null;
+
+function rlHide() {
+  const wrap = document.getElementById('rl-wrap');
+  if (wrap && wrap.classList.contains('rl-visible') && !wrap.classList.contains('rl-hiding')) {
+    // Bouncy squash-out first, then actually hide.
+    wrap.classList.add('rl-hiding');
+    rlHideAnimTimer = setTimeout(() => { rlHideAnimTimer = null; rlHide(); }, 340);
+    return;
+  }
+  if (wrap) {
+    wrap.classList.remove('rl-visible');
+    wrap.classList.remove('rl-hiding');
+    wrap.setAttribute('aria-hidden', 'true');
+  }
+  const strip = document.getElementById('rl-strip');
+  if (strip) strip.innerHTML = '';
+  rlCurrentSpinId = null;
+  if (rlHideTimer) { clearTimeout(rlHideTimer); rlHideTimer = null; }
+}
+
+function rlBuildRow(entry) {
+  const row = document.createElement('div');
+  row.className = 'rl-row';
+  const iconWrap = document.createElement('div');
+  iconWrap.className = 'rl-icon-wrap';
+  const iconUrl = String(entry.icon_url || '');
+  if (iconUrl) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.onload = function() { img.style.display = 'block'; };
+    img.onerror = function() {
+      img.remove();
+      const fb = document.createElement('span');
+      fb.className = 'rl-icon-fallback';
+      fb.textContent = '?';
+      iconWrap.appendChild(fb);
+    };
+    img.src = iconUrl;
+    iconWrap.appendChild(img);
+  } else {
+    const fb = document.createElement('span');
+    fb.className = 'rl-icon-fallback';
+    fb.textContent = '?';
+    iconWrap.appendChild(fb);
+  }
+  const texts = document.createElement('div');
+  texts.className = 'rl-texts';
+  const label = document.createElement('div');
+  label.className = 'rl-label';
+  label.textContent = String(entry.label || '');
+  const giftName = document.createElement('div');
+  giftName.className = 'rl-gift-name';
+  giftName.textContent = '#' + String(entry.gift_id || '');
+  texts.appendChild(label);
+  texts.appendChild(giftName);
+  row.appendChild(iconWrap);
+  row.appendChild(texts);
+  return row;
+}
+
+function rlStartSpin(data) {
+  const wrap = document.getElementById('rl-wrap');
+  const strip = document.getElementById('rl-strip');
+  const trigger = document.getElementById('rl-trigger');
+  if (!wrap || !strip) return;
+
+  rlCurrentSpinId = data.spin_id;
+  if (trigger) {
+    const user = String((data.trigger || {}).user || '');
+    trigger.textContent = user ? ('from ' + user) : '';
+  }
+
+  // Build rows (max 25, ends on winner) — DOM only, no innerHTML injection.
+  strip.innerHTML = '';
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  const reel = Array.isArray(data.reel) ? data.reel : [];
+  reel.forEach(idx => {
+    const entry = entries[idx];
+    if (entry) strip.appendChild(rlBuildRow(entry));
+  });
+  if (!strip.children.length) { rlHide(); return; }
+
+  // Winner highlight is applied at land via the transition end below.
+  if (rlHideAnimTimer) { clearTimeout(rlHideAnimTimer); rlHideAnimTimer = null; }
+  wrap.classList.remove('rl-hiding');
+  // Restart the pop animation on every new spin (remove/re-add class trick).
+  wrap.classList.remove('rl-visible');
+  void wrap.offsetWidth;
+  wrap.classList.add('rl-visible');
+  wrap.setAttribute('aria-hidden', 'false');
+
+  // One transform transition for the whole roll. Duration derives from the
+  // server timestamps so a mid-spin OBS load lands correctly.
+  const rowH = 52;
+  const distance = (strip.children.length - 1) * rowH;
+  const now = Date.now() / 1000;
+  const landsAt = Number(data.lands_at) || now;
+  const durationMs = Math.max(0, (landsAt - now) * 1000);
+
+  strip.style.transition = 'none';
+  strip.style.transform = 'translate3d(0, 0, 0)';
+  // Force layout so the reset transform commits before the animated one.
+  void strip.offsetHeight;
+
+  const winnerIdx = Math.max(0, reel.length - 1);
+  const finish = () => {
+    const winnerEntry = entries[Number(data.winner_index) || 0];
+    const rows = strip.children;
+    // Highlight the row matching the winner gift id (reel decorates; winner_index selects).
+    if (winnerEntry) {
+      for (let i = 0; i < rows.length; i++) {
+        // rows carry no data; simplest correct approach: highlight the final row
+      }
+    }
+    if (rows.length) rows[rows.length - 1].classList.add('rl-winner');
+    strip.style.willChange = 'auto';
+  };
+
+  if (durationMs <= 0) {
+    // Loaded after land: show winner immediately.
+    strip.style.transform = 'translate3d(0, ' + (-distance) + 'px, 0)';
+    finish();
+  } else {
+    strip.style.willChange = 'transform';
+    requestAnimationFrame(() => {
+      strip.style.transition = 'transform ' + durationMs.toFixed(0) + 'ms cubic-bezier(.15,.85,.25,1)';
+      strip.style.transform = 'translate3d(0, ' + (-distance) + 'px, 0)';
+    });
+    setTimeout(finish, durationMs + 50);
+  }
+
+  // Hide after hold expires (server-authoritative hide_at).
+  if (rlHideTimer) clearTimeout(rlHideTimer);
+  const hideAt = Number(data.hide_at) || (landsAt + 4);
+  const hideMs = Math.max(1000, (hideAt - now) * 1000);
+  rlHideTimer = setTimeout(rlHide, hideMs);
+}
+
+function handleRoulette(data) {
+  if (!data || typeof data !== 'object') return;
+  if (data.status === 'idle') {
+    // Don't hide mid-animation on a single idle poll; the hide timer governs.
+    return;
+  }
+  if (data.spin_id && data.spin_id !== rlCurrentSpinId) {
+    rlStartSpin(data);
+  }
+}
+// ===== GIFT ROULETTE END =====
+
+// ============ INIT ============
+fetchData();
+const overlayPollMs = TYPE === 'song' ? 1000
+  : TYPE === 'coingoal' ? 2000
+  : TYPE === 'roulette' ? 500
+  : TYPE === 'topgift' || TYPE === 'topstreak' || TYPE === 'topshowcase' ? 3000
+  : 1500;
+setInterval(fetchData, overlayPollMs);
+if (TYPE === 'song') setInterval(updateSongProgressDisplay, 250);
