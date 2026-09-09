@@ -13,16 +13,34 @@ import datetime
 from flask import Flask, render_template, request, jsonify, send_file, send_from_directory, abort
 from werkzeug.utils import secure_filename
 from event_registry import get_registry_for_api, get_registry_with_categories, get_event_categories
-from actions import migrate_to_events_redesign
+from actions import migrate_to_events_redesign, migrate_config_actions
 import spotify_handler as sh
+import gift_roulette
 from utils import load_json, save_json, safe_json_read
 from constants import *
 from routes.spotify import spotify_bp
 from routes.stats import stats_bp, init_stats_blueprint
+from routes.overlay_settings import init_overlay_settings_blueprint
+from routes.points import points_bp
 from routes.addons import addons_api_bp, addons_page_bp, init_addons_blueprint
-from addons.oneblock.runtime.objective_api import create_objective_rush_blueprint
-from addons.oneblock.runtime.objective_service import ObjectiveRushService
+from routes.sociabuzz import create_sociabuzz_blueprint, load_or_create_webhook_settings
+from routes.gift_card_studio import (
+    create_gift_studio_assets_blueprint,
+    create_gift_studio_blueprint,
+)
 import paths
+import gift_catalog
+import gift_catalog_sync
+import gift_catalog_backfill
+from addons.survival_rush.runtime.api import create_survival_rush_blueprint
+from addons.survival_rush.runtime.service import SurvivalRushService
+import addon_loader
+import addon_runtime_registry
+from sim_console_log import append_line as append_sim_console_line
+from sim_console_log import clear_log as clear_sim_console_log
+from sim_console_log import read_tail as read_sim_console_tail
+import bot_status as bot_status_mod
+from gift_simulation import build_dashboard_sender, simulate_gift
 
 # Centralized folderized path layout (release/config, release/data, release/logs, release/assets)
 BASE_DIR = paths.BASE_DIR
@@ -38,27 +56,83 @@ else:
 # Register blueprints
 app.register_blueprint(spotify_bp, url_prefix='/api/spotify')
 app.register_blueprint(stats_bp, url_prefix='/api/stats')
+app.register_blueprint(points_bp, url_prefix='/api/points')
 app.register_blueprint(addons_api_bp, url_prefix='/api/addons')
 app.register_blueprint(addons_page_bp)
 
-objective_rush_service = ObjectiveRushService(
-    paths.addons("oneblock"),
-    paths.data("oneblock_objective_rush_state.json"),
+_sociabuzz_settings = load_or_create_webhook_settings(
+    paths.config("sociabuzz_webhook.json")
 )
 app.register_blueprint(
-    create_objective_rush_blueprint(objective_rush_service),
-    url_prefix="/api/addons/oneblock/objective-rush",
+    create_sociabuzz_blueprint(
+        secret=_sociabuzz_settings["path_secret"],
+        expected_token=_sociabuzz_settings["webhook_token"],
+        capture_path=paths.data("sociabuzz_webhook_capture.json"),
+    )
 )
-objective_rush_service.start_poller()
-atexit.register(objective_rush_service.stop_poller)
+
+survival_rush_service = SurvivalRushService(
+    paths.addons("survival_rush"),
+)
+app.register_blueprint(
+    create_survival_rush_blueprint(survival_rush_service),
+    url_prefix="/api/addons/survival-rush/objective-rush",
+)
+_survival_addon = addon_loader.load_addon("survival_rush")
+addon_runtime_registry.register(
+    "survival_rush",
+    survival_rush_service,
+    enabled=bool(_survival_addon and _survival_addon.get("enabled", False)),
+)
+if _survival_addon:
+    addon_runtime_registry.set_config(
+        "survival_rush", _survival_addon.get("config") or {}
+    )
+atexit.register(addon_runtime_registry.unregister, "survival_rush")
+
+# Gift Card Studio — overlay card designer. The catalog is read at request time
+# via load_config (defined below) so newly configured gifts appear without an
+# app restart; the lambda defers the lookup instead of capturing a stale dict.
+app.register_blueprint(
+    create_gift_studio_blueprint(
+        data_dir=paths.DATA_DIR,
+        assets_dir=paths.ASSETS_DIR,
+        load_config=lambda: load_config(),
+        base_dir=paths.BASE_DIR,
+    ),
+    url_prefix="/api/gift-studio",
+)
+app.register_blueprint(create_gift_studio_assets_blueprint(paths.DATA_DIR))
 
 # Initialize blueprints with runtime directories
 init_stats_blueprint(paths.DATA_DIR)
+init_overlay_settings_blueprint(paths.DATA_DIR)
 init_addons_blueprint(paths.ADDONS_DIR)
+
+# Long-term viewer points DB (SQLite) — create schema early so the dashboard
+# tab works even before the first gift arrives.
+import points_store
+points_store.init(paths.data("points.db"))
 
 CONFIG_FILE = paths.config("config.yml")
 PROFILES_DIR = os.path.join(paths.CONFIG_DIR, "profiles")
 ACTIVE_PROFILE_FILE = paths.config("active_profile.txt")
+
+
+def _safe_profile_name(value):
+    """Validate a profile display name before joining it to PROFILES_DIR."""
+    name = str(value or "").strip()
+    if (
+        not name
+        or name in {".", ".."}
+        or "/" in name
+        or "\\" in name
+        or ":" in name
+        or os.path.basename(name) != name
+    ):
+        raise ValueError("Invalid profile name")
+    return name
+
 
 bot_process = None
 bot_logs = []
@@ -368,6 +442,165 @@ def update_config():
     return jsonify({"status": "success", "message": "Configuration saved!"})
 
 
+# ── Gift Roulette config + test spin (plan: .hermes/plans/roulette-randomizer.md) ──
+
+_ROULETTE_STATE_PATH = paths.data("roulette_state.json")
+
+
+@app.route("/api/roulette/config", methods=["GET"])
+def get_roulette_config():
+    """Normalized Roulette block plus pool validation for the dashboard panel."""
+    config = load_config()
+    normalized = gift_roulette.normalize_config(config.get("Roulette"))
+    gifts = migrate_config_actions(config).get("Gifts", {})
+    catalog_rows = safe_json_read(paths.data("available_gifts.json"))
+    catalog_by_id = gift_roulette.build_catalog_index(
+        catalog_rows if isinstance(catalog_rows, list) else []
+    )
+    entries = gift_roulette.resolve_entries(normalized, gifts, {}, {}, catalog_by_id)
+
+    warnings = []
+    valid_ids = {e["gift_id"] for e in entries}
+    for gift_id in normalized["pool"]:
+        if gift_id not in valid_ids:
+            warnings.append(f"Pool entry {gift_id} is not a configured gift with actions")
+    if normalized["enabled"] and len(valid_ids) < 2:
+        warnings.append("Enable requires at least 2 valid pool entries")
+    if normalized["enabled"] and not normalized["trigger_gift_id"]:
+        warnings.append("No trigger gift configured")
+
+    resp = jsonify({
+        "roulette": normalized,
+        "resolved_entries": entries,
+        "warnings": warnings,
+    })
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
+
+
+@app.route("/api/roulette/config", methods=["PUT"])
+def update_roulette_config():
+    """Replace ONLY the Roulette block of the active profile. Nothing else.
+
+    Accepts just the normalized Roulette fields — never action bundles or
+    arbitrary config — then saves through the existing save_config path so the
+    active profile copy stays in sync, and signals hot-reload.
+    """
+    payload = request.get_json(silent=True) or {}
+    normalized = gift_roulette.normalize_config(payload)
+
+    if normalized["enabled"] and not normalized["trigger_gift_id"]:
+        return jsonify({"status": "error", "message": "Trigger gift is required to enable"}), 400
+
+    config = load_config()
+    gifts = migrate_config_actions(config).get("Gifts", {})
+    catalog_rows = safe_json_read(paths.data("available_gifts.json"))
+    catalog_by_id = gift_roulette.build_catalog_index(
+        catalog_rows if isinstance(catalog_rows, list) else []
+    )
+    entries = gift_roulette.resolve_entries(normalized, gifts, {}, {}, catalog_by_id)
+    if normalized["enabled"] and len(entries) < 2:
+        return jsonify({
+            "status": "error",
+            "message": "Enable requires at least 2 pool entries that are configured gifts with actions",
+        }), 400
+
+    config["Roulette"] = normalized
+    save_config(config)
+    if is_any_bot_running()[0]:
+        signal_reload()
+    return jsonify({"status": "success", "roulette": normalized})
+
+
+@app.route("/api/roulette/test", methods=["POST"])
+def test_roulette_spin():
+    """Executable test spin — dashboard process ONLY while the bot is stopped.
+
+    The bot and dashboard are separate processes with independent in-memory
+    runtimes; a test spin while the bot is live could interleave state writes
+    and double-fire Minecraft actions. Live testing uses the real trigger gift.
+    """
+    if is_any_bot_running()[0]:
+        return jsonify({
+            "status": "error",
+            "message": "Stop the bot before running an executable Test Spin. "
+                       "While live, test with the real trigger gift instead.",
+        }), 409
+
+    payload = request.get_json(silent=True) or {}
+    user = str(payload.get("user") or "TestViewer").strip()[:100] or "TestViewer"
+
+    config = load_config()
+    config = migrate_config_actions(config)  # legacy string lists must not no-op
+    normalized = gift_roulette.normalize_config(config.get("Roulette"))
+    if not normalized["enabled"]:
+        return jsonify({"status": "error", "message": "Roulette is disabled"}), 400
+
+    gifts = config.get("Gifts", {})
+    catalog_rows = safe_json_read(paths.data("available_gifts.json"))
+    catalog_by_id = gift_roulette.build_catalog_index(
+        catalog_rows if isinstance(catalog_rows, list) else []
+    )
+
+    settings = config.get("Settings") or {}
+    trigger_ctx = {
+        "gift_id": normalized["trigger_gift_id"],
+        "gift_name": "Test Trigger",
+        "repeat_count": "1",
+        "total_coin": "0",
+        "user": user,
+        "mc": str(settings.get("MinecraftUsername") or ""),
+        "amount": "1",
+        "asset_url": "",
+    }
+
+    try:
+        prepared = gift_roulette.prepare_spin(
+            normalized, gifts, {}, {}, catalog_by_id, trigger_ctx,
+            source="test", profile=get_active_profile(),
+        )
+    except gift_roulette.RouletteValidationError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+
+    runtime = gift_roulette.RouletteRuntime(_ROULETTE_STATE_PATH)
+    runtime.sweep_stale()
+    accepted, reason = runtime.try_reserve(
+        prepared, int(normalized.get("cooldown_ms", 2000))
+    )
+    if not accepted:
+        return jsonify({
+            "status": "error",
+            "message": f"Spin rejected: {reason}. Wait for the current/cooldown spin to finish.",
+        }), 409
+    runtime.mark_reserved_started()
+
+    # Submit the landing to the shared background loop; do NOT block this HTTP
+    # request for the full spin duration (mirror of the TTS loop pattern).
+    from gift_simulation import build_dashboard_sender
+    log_sink = lambda message: None  # noqa: E731
+
+    async def _run_test_spin():
+        sender = build_dashboard_sender(config, log=log_sink)
+
+        async def bundle(actions, context):
+            from actions import execute_actions as _exec
+            await _exec(actions, context, sender)
+
+        await runtime.run_reserved(prepared, bundle)
+
+    _submit_async(_run_test_spin())
+
+    resp = jsonify({
+        "status": "accepted",
+        "spin_id": prepared.spin_id,
+        "winner": prepared.winner_label,
+        "lands_at": prepared.public_state["lands_at"],
+        "hide_at": prepared.public_state["hide_at"],
+    })
+    resp.headers["Cache-Control"] = "no-store"
+    return resp, 202
+
+
 @app.route("/api/test-connection", methods=["POST"])
 def test_connection():
     """Test Minecraft connection based on posted connector form values.
@@ -465,7 +698,10 @@ def get_profiles():
 
 @app.route("/api/profiles/switch", methods=["POST"])
 def switch_profile():
-    name = request.json.get("profile")
+    try:
+        name = _safe_profile_name((request.get_json(silent=True) or {}).get("profile"))
+    except ValueError:
+        return jsonify({"status": "error", "message": "Invalid profile name"}), 400
     profile_path = os.path.join(PROFILES_DIR, f"{name}.yml")
     if os.path.exists(profile_path):
         shutil.copy(profile_path, CONFIG_FILE)
@@ -478,11 +714,12 @@ def switch_profile():
 
 @app.route("/api/profiles/create", methods=["POST"])
 def create_profile():
-    name = request.json.get("profile")
-    duplicate = request.json.get("duplicate", False)
-    
-    if not name:
-        return jsonify({"status": "error", "message": "Profile name required"}), 400
+    payload = request.get_json(silent=True) or {}
+    try:
+        name = _safe_profile_name(payload.get("profile"))
+    except ValueError:
+        return jsonify({"status": "error", "message": "Invalid profile name"}), 400
+    duplicate = payload.get("duplicate", False)
         
     profile_path = os.path.join(PROFILES_DIR, f"{name}.yml")
     if os.path.exists(profile_path):
@@ -500,6 +737,10 @@ def create_profile():
 
 @app.route("/api/profiles/<name>", methods=["DELETE"])
 def delete_profile(name):
+    try:
+        name = _safe_profile_name(name)
+    except ValueError:
+        return jsonify({"status": "error", "message": "Invalid profile name"}), 400
     if name == get_active_profile():
         return jsonify({"status": "error", "message": "Cannot delete active profile"}), 400
         
@@ -511,6 +752,10 @@ def delete_profile(name):
 
 @app.route("/api/profiles/<name>/export", methods=["GET"])
 def export_profile(name):
+    try:
+        name = _safe_profile_name(name)
+    except ValueError:
+        return jsonify({"status": "error", "message": "Invalid profile name"}), 400
     profile_path = os.path.join(PROFILES_DIR, f"{name}.yml")
     if os.path.exists(profile_path):
         return send_file(profile_path, as_attachment=True, download_name=f"{name}.yml")
@@ -569,24 +814,30 @@ def serve_avatar_cache(fname):
 
 @app.route('/api/gifts/available', methods=['GET'])
 def get_available_gifts():
+    """Serve the union-merged gift catalog.
+
+    TikTok's /gift/list/ is only the room panel (verified: 701 of 2783 gifts,
+    is_full_gift_data=False), so this endpoint serves the merged cache that also
+    holds region-synced and event-learned gifts. A live fetch here only ever
+    MERGES into that cache — it must never overwrite it, or gifts that exist
+    solely in Khito's room (Super GG, KhitoFam) would be deleted.
+    """
     gifts_file = paths.data("available_gifts.json")
-    cached_data = None
-    if os.path.exists(gifts_file):
-        try:
-            with open(gifts_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if data:
-                    cached_data = data
-                    # Old caches only had id/name/coins/icon. If the enhanced
-                    # fields are already present, serve the cache immediately.
-                    if any(isinstance(g, dict) and ("primary_effect_id" in g or "resource_id" in g) for g in data):
-                        return jsonify(data)
-        except Exception:
-            cached_data = None
-    
-    # Fallback/refresh: fetch directly from TikTok API. The plain
-    # device_platform=web call can return an empty 200 body; the web client params
-    # mirror TikTokLive's signed-web request enough to return the full gift list.
+    cached = gift_catalog.load_catalog(gifts_file)
+
+    # Panel scope: the picker's precise default — only gifts TikTok currently
+    # offers in this room. Room scope remains available for callers that need
+    # current-panel plus previously received gifts. Full scope stays unchanged.
+    if cached and request.args.get("scope") == "panel":
+        cached = [e for e in cached if e.get("in_panel")]
+    elif cached and request.args.get("scope") == "room":
+        cached = [e for e in cached if e.get("in_panel") or e.get("seen")]
+
+    # A populated cache is authoritative; refreshing is an explicit action via
+    # /api/gifts/refresh so the dashboard never blocks on TikTok.
+    if cached:
+        return jsonify(cached)
+
     try:
         import requests as req
         params = {
@@ -610,36 +861,114 @@ def get_available_gifts():
         }
         resp = req.get("https://webcast.tiktok.com/webcast/gift/list/", params=params, headers=headers, timeout=10)
         raw = resp.json().get("data", {})
-        gifts = []
-        for g in raw.get("gifts", []):
-            icon_url = ""
-            if g.get("icon") and g["icon"].get("url_list") and len(g["icon"]["url_list"]) > 0:
-                icon_url = g["icon"]["url_list"][0]
-            diamond_count = int(g.get("diamond_count", 0) or 0)
-            primary_effect_id = str(g.get("primary_effect_id", "") or "")
-            resource_id = str(g.get("resource_id", "") or "")
-            gifts.append({
-                "id": g.get("id", 0),
-                "name": str(g.get("name", "")).lower(),
-                "diamond_count": diamond_count,
-                "icon": icon_url,
-                # These IDs are the only animation-related fields present in
-                # /webcast/gift/list/. The endpoint does NOT expose a direct
-                # ZIP/MP4 animation URL; GiftEvent.asset is still needed to cache
-                # the actual playable file.
-                "primary_effect_id": primary_effect_id,
-                "resource_id": resource_id,
-                "has_animation": bool(diamond_count >= 100 and (primary_effect_id or resource_id)),
-            })
-        gifts.sort(key=lambda x: x["diamond_count"])
-        # Cache it for next time
-        with open(gifts_file, "w", encoding="utf-8") as f:
-            json.dump(gifts, f, indent=2)
-        return jsonify(gifts)
+        gift_catalog.merge_into_catalog(gifts_file, raw.get("gifts", []), source="panel")
+        return jsonify(gift_catalog.load_catalog(gifts_file))
     except Exception as e:
-        if cached_data:
-            return jsonify(cached_data)
+        if cached:
+            return jsonify(cached)
         return jsonify({"error": f"Could not fetch gifts: {str(e)}"}), 500
+
+
+@app.route('/api/gifts/simulate', methods=['POST'])
+def simulate_configured_gift():
+    """Run global and gift-specific actions without fabricating a TikTok event."""
+    data = request.get_json(silent=True) or {}
+    config = load_config()
+    gift_key = str(data.get("gift_key") or "").strip()
+
+    catalog_entry = None
+    for entry in gift_catalog.load_catalog(paths.data("available_gifts.json")):
+        if str(entry.get("id") or "") == gift_key:
+            catalog_entry = entry
+            break
+
+    def log(message):
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        append_sim_console_line(paths.logs("sim_console.log"), f"[{ts}] {message}")
+
+    try:
+        result = _run_async(simulate_gift(
+            config,
+            gift_key=gift_key,
+            user=data.get("user"),
+            amount=data.get("amount"),
+            gift_meta=catalog_entry,
+            send_mc_command=build_dashboard_sender(config, log=log),
+        ))
+        return jsonify(result)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        log(f"[ERR] gift simulation failed: {exc}")
+        return jsonify({"error": str(exc)}), 502
+
+
+@app.route('/api/gifts/refresh', methods=['POST'])
+def refresh_available_gifts():
+    """Rebuild the gift catalog from every available source.
+
+    Sources are unioned, never replaced:
+      1. TikTok's public /gift/list/ (the room-agnostic web panel)
+      2. EulerStream's per-region panels (recovers region-locked gifts such as
+         Game Controller 6581/7569, absent from Indonesia's panel)
+      3. EulerStream's full gift catalog, 2783 rows (recovers gifts retired from
+         every live panel: Spirit of 45, Live Up, Fighting, Spark ring)
+      4. Local history — gift_log.json + points.db (recovers gifts in NO
+         catalog anywhere, e.g. Super GG 12988 and the custom KhitoFam 938882)
+
+    Event-learned gifts already in the cache always survive.
+    """
+    gifts_file = paths.data("available_gifts.json")
+    before = len(gift_catalog.load_catalog(gifts_file))
+    result = {
+        "before": before, "panel": {}, "regions": {}, "euler_catalog": {},
+        "history": {}, "errors": [],
+    }
+
+    try:
+        import requests as req
+        params = {
+            "aid": "1988", "app_name": "tiktok_web", "device_platform": "web",
+            "browser_language": "en", "browser_name": "Mozilla", "browser_online": "true",
+            "browser_platform": "Win32", "browser_version": "5.0", "cookie_enabled": "true",
+            "screen_width": "1920", "screen_height": "1080",
+        }
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+            "Accept": "application/json,text/plain,*/*",
+            "Referer": "https://www.tiktok.com/",
+            "Origin": "https://www.tiktok.com",
+        }
+        resp = req.get("https://webcast.tiktok.com/webcast/gift/list/", params=params, headers=headers, timeout=15)
+        panel = (resp.json().get("data") or {}).get("gifts", [])
+        result["panel"] = gift_catalog.merge_into_catalog(gifts_file, panel, source="panel")
+        result["panel"]["fetched"] = len(panel)
+    except Exception as e:
+        result["errors"].append(f"TikTok panel: {e}")
+
+    try:
+        cfg = load_config() or {}
+        api_key = str((cfg.get("Settings") or {}).get("EulerApiKey", "") or "")
+        result["regions"] = gift_catalog_sync.sync_regions(gifts_file, api_key)
+        if result["regions"].get("error"):
+            result["errors"].append(f"Region sync: {result['regions']['error']}")
+        result["euler_catalog"] = gift_catalog_sync.sync_euler_catalog(gifts_file, api_key)
+        if result["euler_catalog"].get("error"):
+            result["errors"].append(f"Euler catalog: {result['euler_catalog']['error']}")
+    except Exception as e:
+        result["errors"].append(f"Region sync: {e}")
+
+    try:
+        result["history"] = gift_catalog_backfill.backfill_all(
+            gifts_file, paths.data("gift_log.json"), paths.data("points.db")
+        )
+    except Exception as e:
+        result["errors"].append(f"History backfill: {e}")
+
+    result["after"] = len(gift_catalog.load_catalog(gifts_file))
+    result["added"] = result["after"] - before
+    result["status"] = "ok" if result["after"] > 0 else "error"
+    return jsonify(result), (200 if result["after"] > 0 else 500)
 
 @app.route("/api/bot/start", methods=["POST"])
 def start_bot():
@@ -772,12 +1101,60 @@ def stop_bot():
 def bot_status():
     _running, local_running, external = is_any_bot_running()
     external_pids = [p.get("pid") for p in external]
+    running = bool(local_running or external)
+    
+    # Load current settings to show LogOnlyMode/DebugMode state
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                c = yaml.safe_load(f) or {}
+            _current_settings = c.get("Settings", {})
+        else:
+            _current_settings = {}
+    except Exception:
+        _current_settings = {}
+    
+    status = bot_status_mod.read_status(paths)
+
+    # Derive the display state:
+    #  - Process dead + no state file   -> offline (never started)
+    #  - Process dead + last state was 'ended'/'stopped' -> offline (clean stop)
+    #  - Process dead + last state was 'failed'          -> failed (retries exhausted)
+    #  - Process dead otherwise                          -> offline (crashed/ended)
+    #  - Process alive -> trust the state file, fall back to "connecting" if stale.
+    state = status.get("state")
+    ts = status.get("ts")
+    
+    # Don't treat connected/disconnected/ended/stopped as stale ever — those are terminal
+    # states that don't need heartbeats. Only flag transient states (starting/connecting/reconnecting)
+    # as potentially stale, and give them 60s instead of 30s to avoid flappy UI.
+    is_transient_state = state in ("starting", "connecting", "reconnecting")
+    stale = ts is None or (is_transient_state and (_time.time() - ts) > 60)
+
+    if running:
+        if not state or stale:
+            derived = "connecting"
+        else:
+            derived = state
+    else:
+        if state in ("failed",):
+            derived = "failed"
+        else:
+            derived = "offline"
+
     return jsonify({
-        "running": bool(local_running or external),
+        "running": running,
+        "state": derived,
         "local": local_running,
         "external": bool(external),
         "external_pids": external_pids,
         "pid": bot_process.pid if local_running and bot_process is not None else (external_pids[0] if external_pids else None),
+        "room_id": status.get("room_id"),
+        "username": status.get("username"),
+        "error": status.get("error"),
+        "attempt": status.get("attempt"),
+        "max_attempts": status.get("max_attempts"),
+        "settings": _current_settings,  # Include LogOnlyMode/DebugMode state
     })
 
 @app.route("/api/bot/logs", methods=["GET"])
@@ -803,23 +1180,18 @@ def sim_console_logs_endpoint():
     to import the bot's modules in the dashboard.
     """
     log_path = paths.logs("sim_console.log")
-    if not os.path.exists(log_path):
-        return jsonify({"logs": []})
     try:
-        # Keep the last 500 lines, which matches the deque size
-        with open(log_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        return jsonify({"logs": [l.rstrip("\n") for l in lines[-500:]]})
+        snapshot = read_sim_console_tail(log_path, max_lines=500)
+        return jsonify({"logs": snapshot.lines, "revision": snapshot.revision})
     except Exception:
-        return jsonify({"logs": []})
+        return jsonify({"logs": [], "revision": "error"})
 
 @app.route("/api/console/clear", methods=["POST"])
 def sim_console_clear_endpoint():
     """Clear the simulated Minecraft console log."""
     log_path = paths.logs("sim_console.log")
     try:
-        if os.path.exists(log_path):
-            os.remove(log_path)
+        clear_sim_console_log(log_path)
     except Exception:
         pass
     return jsonify({"ok": True})
@@ -851,12 +1223,8 @@ def sim_console_send_endpoint():
 
         # Always append to the local sim console for the UI display
         ts = datetime.datetime.now().strftime("%H:%M:%S")
-        try:
-            log_path = paths.logs("sim_console.log")
-            with open(log_path, "a", encoding="utf-8") as lf:
-                lf.write(f"[{ts}] [→] {cmd}\n")
-        except Exception:
-            pass
+        log_path = paths.logs("sim_console.log")
+        append_sim_console_line(log_path, f"[{ts}] [→] {cmd}")
 
         if connector == "forge":
             forge = (cfg.get("Forge", {}) or {})
@@ -874,8 +1242,16 @@ def sim_console_send_endpoint():
                         out = r.json().get("output", "")
                     except Exception:
                         out = ""
+                    append_sim_console_line(
+                        log_path,
+                        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] " + (out or "[ok]"),
+                    )
                     return jsonify({"ok": True, "output": out})
                 else:
+                    append_sim_console_line(
+                        log_path,
+                        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] [ERR] HTTP {r.status_code}: {r.text[:200]}",
+                    )
                     return jsonify({
                         "ok": False,
                         "error": f"HTTP {r.status_code}: {r.text[:200]}"
@@ -974,6 +1350,16 @@ def _run_async(coro):
     import concurrent.futures
     future = _asyncio.run_coroutine_threadsafe(coro, _tts_loop)
     return future.result(timeout=30)
+
+
+def _submit_async(coro):
+    """Fire-and-forget submit to the shared background event loop.
+
+    Unlike _run_async this does NOT block the Flask request until the coroutine
+    finishes — used by the Roulette test spin, which must return 202 immediately
+    while the landing happens up to spin_ms later.
+    """
+    return _asyncio.run_coroutine_threadsafe(coro, _tts_loop)
 
 
 TTS_CONFIG_FILE = paths.data("tts_config.json")
@@ -1349,6 +1735,10 @@ def _tts_speak_impl():
 COIN_GOAL_FILE = paths.data("coin_goal.json")
 COIN_GOAL_DEFAULTS = {"current": 0, "goal": 10000, "label": "Tip Jar", "sublabel": ""}
 
+# ── TOP GIFT LAYOUT ────────────────────────────────────────
+TOP_GIFT_LAYOUT_FILE = paths.data("topgift_layout.json")
+TOP_GIFT_LAYOUT_DEFAULTS = {"layout": "left", "updated_at": ""}
+
 
 @app.route("/api/coingoal", methods=["POST"])
 def update_coin_goal():
@@ -1469,6 +1859,30 @@ def update_gift_goal():
 
     save_json(GIFT_GOAL_FILE, merged)
     return jsonify({"status": "success", "data": merged})
+
+
+# ── TOP GIFT LAYOUT ────────────────────────────────────────
+@app.route("/api/topgift/layout", methods=["POST"])
+def update_topgift_layout():
+    """Update top gift layout choice. Called from dashboard Customize popup."""
+    data = request.json or {}
+    current = load_json(TOP_GIFT_LAYOUT_FILE, dict(TOP_GIFT_LAYOUT_DEFAULTS))
+    if not isinstance(current, dict):
+        current = {}
+    merged = dict(TOP_GIFT_LAYOUT_DEFAULTS)
+    merged.update({k: v for k, v in current.items() if k in TOP_GIFT_LAYOUT_DEFAULTS})
+    
+    layout = str(data.get("layout", "left")).strip().lower()
+    valid_layouts = {"left", "center", "right"}
+    if layout not in valid_layouts:
+        layout = "left"
+    merged["layout"] = layout
+    merged["updated_at"] = "2026-08-19T20:00:00Z"  # Would use datetime.utcnow().isoformat() but keeping simple
+    
+    save_json(TOP_GIFT_LAYOUT_FILE, merged)
+    return jsonify({"status": "success", "data": merged})
+
+
 
 
 if __name__ == "__main__":

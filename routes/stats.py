@@ -6,13 +6,14 @@ from flask import Blueprint, jsonify, request
 from utils import safe_json_read, save_json, load_json
 import paths
 from avatar_cache import cache_avatar_image, is_local_avatar_url, local_avatar_path_from_url
+from routes.overlay_settings import get_settings as _overlay_get_settings, update_settings as _overlay_update_settings
 
 stats_bp = Blueprint('stats', __name__)
 
 COIN_GOAL_FILE = paths.data("coin_goal.json")
 
 # Will be set by app.py after BASE_DIR is defined
-BASE_DIR = None
+BASE_DIR: str = ""
 
 
 # Top Gift and Top Streak poll frequently in OBS.  They need one selected
@@ -107,9 +108,80 @@ def get_gift_log():
     """Get gift log."""
     summary = request.args.get("summary", "").strip().lower()
     if summary in {"topgift", "topstreak", "topshowcase"}:
-        return jsonify(_gift_log_summary(summary))
+        payload = _gift_log_summary(summary)
+        # Add dashboard-chosen card layout to every top card summary so OBS picks
+        # up switches live (Top Gift, Top Streak, and Top Showcase share it).
+        layout_value = _read_topgift_layout()["layout"]
+        # Normalize payload shape to {topgift: {...}} / {entries: [...]} / {topgift, topstreak}
+        if summary == "topgift":
+            wrapped: dict = {
+                "topgift": payload[0] if isinstance(payload, list) and payload else None,
+                "layout": layout_value,
+            }
+        elif summary == "topstreak":
+            wrapped: dict = {
+                "entries": payload if isinstance(payload, list) else [],
+                "layout": layout_value,
+            }
+        elif summary == "topshowcase":
+            wrapped: dict = dict(payload) if isinstance(payload, dict) else {}
+            wrapped["layout"] = layout_value
+        else:
+            wrapped = {"entries": payload} if isinstance(payload, list) else dict(payload)
+        response = jsonify(wrapped)
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        return response
     data = safe_json_read(os.path.join(BASE_DIR, "gift_log.json"))
     return jsonify(data if data is not None else [])
+
+
+# ── Gift Roulette state (plan: .hermes/plans/roulette-randomizer.md) ────────
+_ROULETTE_STATE_FILE = "roulette_state.json"
+
+
+def _roulette_state_path():
+    # init_stats_blueprint sets BASE_DIR to the data directory; the fallback
+    # keeps the endpoint testable before app.py runs init.
+    base = BASE_DIR if BASE_DIR else paths.DATA_DIR
+    return os.path.join(base, _ROULETTE_STATE_FILE)
+
+
+@stats_bp.route("/roulette", methods=["GET"])
+def get_roulette_state():
+    """Public display-only spin state for /overlay/roulette.
+
+    Reads the state file written by the bot process (or a dashboard test spin).
+    Never contains commands or secrets. Expired spinning/landed states read as
+    idle so a closed overlay or stale process never shows a dead spin.
+    """
+    from utils import load_json as _load_json
+    state = _load_json(_roulette_state_path(), None)
+    if not isinstance(state, dict):
+        state = None
+
+    import time as _time
+    now = _time.time()
+    if state and state.get("status") in ("spinning", "landed"):
+        hide_at = state.get("hide_at") or 0
+        try:
+            expired = now > float(hide_at)
+        except (TypeError, ValueError):
+            expired = True
+        if expired:
+            state = None
+
+    if not state or state.get("status") in ("cancelled", None, ""):
+        payload = {"status": "idle"}
+    else:
+        # spinning AND landed both need the full display payload: the overlay
+        # animates from entries/reel/lands_at while spinning, then highlights
+        # winner_index after landing. All fields are display-only.
+        payload = state
+
+    response = jsonify(payload)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @stats_bp.route("/gifts/clear", methods=["POST"])
@@ -238,85 +310,139 @@ def get_active_streaks():
     return jsonify(data if data is not None else {})
 
 
+@stats_bp.route("/overlay/settings", methods=["GET"])
+def get_overlay_settings():
+    """Amount-visibility settings for the Top Gifter/Liker leaderboard overlay."""
+    response = jsonify(_overlay_get_settings())
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+@stats_bp.route("/overlay/settings", methods=["POST"])
+def update_overlay_settings():
+    """Update amount-visibility settings. Called from dashboard toggles."""
+    data = request.get_json(silent=True) or {}
+    show_gift = data.get("show_gift_amounts")
+    show_like = data.get("show_like_amounts")
+    if show_gift is None and show_like is None:
+        return jsonify({"status": "error", "message": "No settings provided"}), 400
+    if not _overlay_update_settings(
+        show_gift_amounts=None if show_gift is None else bool(show_gift),
+        show_like_amounts=None if show_like is None else bool(show_like),
+    ):
+        return jsonify({"status": "error", "message": "Failed to persist settings"}), 500
+    return jsonify({"status": "success", **_overlay_get_settings()})
+
+
+def _read_ranking(name):
+    """Read a ranking file relative to BASE_DIR (data/ sibling layout)."""
+    ranking_file = os.path.join(BASE_DIR, "..", "data", name)
+    if not os.path.exists(ranking_file):
+        ranking_file = os.path.join(BASE_DIR, name)
+    data = safe_json_read(ranking_file)
+    return data if isinstance(data, list) else []
+
+
+def _enrich_rank_avatars(gifters):
+    """Backfill avatar_url for ranking entries from the persistent avatar cache.
+
+    TikTokLive can intermittently omit profile pictures on gift events. Entries
+    are enriched in place from the cache seeded by chat/follow/gift events, and
+    expiring TikTok CDN URLs are backfilled to stable local /avatar_cache/ files.
+    Loads and persists data/avatar_cache.json itself. Returns True when any
+    entry changed.
+    """
+    avatar_cache_file = paths.data("avatar_cache.json")
+    avatar_cache = safe_json_read(avatar_cache_file)
+    if not isinstance(avatar_cache, dict):
+        avatar_cache = {}
+
+    def cache_key(nick="", unique_id=""):
+        unique_id = str(unique_id or "").strip().lower()
+        if unique_id:
+            return f"uid:{unique_id}"
+        return f"nick:{str(nick or '').strip().lower()}"
+
+    changed = False
+    for entry in gifters:
+        if not isinstance(entry, dict):
+            continue
+
+        avatar_url = str(entry.get("avatar_url") or "")
+        cached_source_url = ""
+        for key in (cache_key(entry.get("nick", ""), entry.get("unique_id", "")), cache_key(entry.get("nick", ""), "")):
+            cached = avatar_cache.get(key)
+            if isinstance(cached, dict):
+                cached_avatar = str(cached.get("avatar_url") or "")
+                cached_source_url = str(cached.get("source_url") or cached_source_url or "")
+            elif isinstance(cached, str):
+                cached_avatar = cached
+            else:
+                cached_avatar = ""
+            if not avatar_url and cached_avatar:
+                avatar_url = cached_avatar
+                entry["avatar_url"] = avatar_url
+                changed = True
+                break
+
+        # Backfill older ranking/cache entries from expiring TikTok URLs to real
+        # local files. If a local URL points at a missing file, try its source_url.
+        needs_local = avatar_url and not is_local_avatar_url(avatar_url)
+        if is_local_avatar_url(avatar_url):
+            local_path = local_avatar_path_from_url(avatar_url)
+            needs_local = not (local_path and os.path.exists(local_path))
+            if needs_local and cached_source_url:
+                avatar_url = cached_source_url
+
+        if needs_local and avatar_url:
+            local_url = cache_avatar_image(avatar_url, entry.get("nick", ""), entry.get("unique_id", ""))
+            if local_url:
+                entry["avatar_url"] = local_url
+                changed = True
+                now = int(__import__('time').time())
+                for key in (cache_key(entry.get("nick", ""), entry.get("unique_id", "")), cache_key(entry.get("nick", ""), "")):
+                    if key:
+                        avatar_cache[key] = {
+                            "nick": entry.get("nick", ""),
+                            "unique_id": entry.get("unique_id", ""),
+                            "avatar_url": local_url,
+                            "source_url": avatar_url if not is_local_avatar_url(avatar_url) else cached_source_url,
+                            "updated_at": now,
+                        }
+    return changed
+
+
 @stats_bp.route("/topgifter", methods=["GET"])
 def get_top_gifters():
-    """Get top 3 gifters by total coins for the podium overlay."""
+    """Top gifters + likers for the rotating leaderboard overlay.
+
+    Returns {gifters: [...], likers: [...], show_gift_amounts, show_like_amounts}
+    so the overlay applies amount visibility on its existing poll.
+    """
     try:
-        ranking_file = os.path.join(BASE_DIR, "..", "data", "gifter_ranking.json")
-        if not os.path.exists(ranking_file):
-            ranking_file = os.path.join(BASE_DIR, "gifter_ranking.json")
-        data = safe_json_read(ranking_file)
-        if not isinstance(data, list):
-            data = []
+        settings = _overlay_get_settings()
+        gifters = _read_ranking("gifter_ranking.json")
+        likers = _read_ranking("liker_ranking.json")
 
-        # TikTokLive can intermittently omit profile pictures on gift events.
-        # Enrich podium entries from the persistent avatar cache seeded by chat/follow/gift events.
-        avatar_cache_file = paths.data("avatar_cache.json")
-        avatar_cache = safe_json_read(avatar_cache_file)
-        if not isinstance(avatar_cache, dict):
-            avatar_cache = {}
-
-        def cache_key(nick="", unique_id=""):
-            unique_id = str(unique_id or "").strip().lower()
-            if unique_id:
-                return f"uid:{unique_id}"
-            return f"nick:{str(nick or '').strip().lower()}"
-
-        changed = False
-        for entry in data:
-            if not isinstance(entry, dict):
-                continue
-
-            avatar_url = str(entry.get("avatar_url") or "")
-            cached_source_url = ""
-            for key in (cache_key(entry.get("nick", ""), entry.get("unique_id", "")), cache_key(entry.get("nick", ""), "")):
-                cached = avatar_cache.get(key)
-                if isinstance(cached, dict):
-                    cached_avatar = str(cached.get("avatar_url") or "")
-                    cached_source_url = str(cached.get("source_url") or cached_source_url or "")
-                elif isinstance(cached, str):
-                    cached_avatar = cached
-                else:
-                    cached_avatar = ""
-                if not avatar_url and cached_avatar:
-                    avatar_url = cached_avatar
-                    entry["avatar_url"] = avatar_url
-                    changed = True
-                    break
-
-            # Backfill older ranking/cache entries from expiring TikTok URLs to real
-            # local files. If a local URL points at a missing file, try its source_url.
-            needs_local = avatar_url and not is_local_avatar_url(avatar_url)
-            if is_local_avatar_url(avatar_url):
-                local_path = local_avatar_path_from_url(avatar_url)
-                needs_local = not (local_path and os.path.exists(local_path))
-                if needs_local and cached_source_url:
-                    avatar_url = cached_source_url
-
-            if needs_local and avatar_url:
-                local_url = cache_avatar_image(avatar_url, entry.get("nick", ""), entry.get("unique_id", ""))
-                if local_url:
-                    entry["avatar_url"] = local_url
-                    changed = True
-                    now = int(__import__('time').time())
-                    for key in (cache_key(entry.get("nick", ""), entry.get("unique_id", "")), cache_key(entry.get("nick", ""), "")):
-                        if key:
-                            avatar_cache[key] = {
-                                "nick": entry.get("nick", ""),
-                                "unique_id": entry.get("unique_id", ""),
-                                "avatar_url": local_url,
-                                "source_url": avatar_url if not is_local_avatar_url(avatar_url) else cached_source_url,
-                                "updated_at": now,
-                            }
+        # Both boards flow through the SAME enrichment path.
+        changed = _enrich_rank_avatars(gifters)
+        changed = _enrich_rank_avatars(likers) or changed
 
         if changed:
             try:
-                save_json(avatar_cache_file, avatar_cache)
-                save_json(ranking_file, data)
+                gifter_file = os.path.join(BASE_DIR, "..", "data", "gifter_ranking.json")
+                if not os.path.exists(gifter_file):
+                    gifter_file = os.path.join(BASE_DIR, "gifter_ranking.json")
+                save_json(gifter_file, gifters)
             except Exception as e:
                 print(f"[STATS] Failed to persist local avatar cache backfill: {e}")
 
-        return jsonify(data[:3])
+        return jsonify({
+            "gifters": gifters[:10],
+            "likers": likers[:10],
+            "show_gift_amounts": bool(settings.get("show_gift_amounts")),
+            "show_like_amounts": bool(settings.get("show_like_amounts")),
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -384,6 +510,40 @@ GIFT_GOAL_DEFAULTS = {
     "current": 0,
     "header": "Goal Today",
 }
+
+
+# ── TOP GIFT LAYOUT ────────────────────────────────────────
+TOP_GIFT_LAYOUT_FILE = paths.data("topgift_layout.json")
+TOP_GIFT_LAYOUT_DEFAULTS = {
+    "layout": "left",  # allowed values: "left", "center", "right"
+    "updated_at": "",
+}
+
+
+def _read_topgift_layout():
+    """Read top gift layout state with defaults filled in."""
+    data = safe_json_read(TOP_GIFT_LAYOUT_FILE)
+    if not isinstance(data, dict):
+        data = {}
+    merged = dict(TOP_GIFT_LAYOUT_DEFAULTS)
+    merged.update({k: v for k, v in data.items() if k in TOP_GIFT_LAYOUT_DEFAULTS})
+    valid_layouts = {"left", "center", "right"}
+    merged["layout"] = str(merged.get("layout", "left")).strip().lower()
+    if merged["layout"] not in valid_layouts:
+        merged["layout"] = "left"
+    return merged
+
+
+@stats_bp.route("/topgift/layout", methods=["GET"])
+def get_topgift_layout():
+    """Get the top gift layout choice for the overlay."""
+    response = jsonify(_read_topgift_layout())
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 
 
 def _cached_gift_asset_url(gift_id):
