@@ -489,9 +489,6 @@ def update_roulette_config():
     payload = request.get_json(silent=True) or {}
     normalized = gift_roulette.normalize_config(payload)
 
-    if normalized["enabled"] and not normalized["trigger_gift_id"]:
-        return jsonify({"status": "error", "message": "Trigger gift is required to enable"}), 400
-
     config = load_config()
     gifts = migrate_config_actions(config).get("Gifts", {})
     catalog_rows = safe_json_read(paths.data("available_gifts.json"))
@@ -499,17 +496,29 @@ def update_roulette_config():
         catalog_rows if isinstance(catalog_rows, list) else []
     )
     entries = gift_roulette.resolve_entries(normalized, gifts, {}, {}, catalog_by_id)
-    if normalized["enabled"] and len(entries) < 2:
-        return jsonify({
-            "status": "error",
-            "message": "Enable requires at least 2 pool entries that are configured gifts with actions",
-        }), 400
+
+    # NEVER discard the user's save. Invalid-enable does not 400: it persists
+    # everything with enabled=False and returns a warning the panel shows.
+    warnings = []
+    if normalized["enabled"]:
+        if not normalized["trigger_gift_id"]:
+            warnings.append("Trigger gift required — Roulette saved but left disabled")
+            normalized["enabled"] = False
+        elif len(entries) < 2:
+            warnings.append("Needs at least 2 valid pool entries — Roulette saved but left disabled")
+            normalized["enabled"] = False
+    for gift_id in normalized["pool"]:
+        if gift_id not in {e["gift_id"] for e in entries}:
+            warnings.append(f"Pool entry {gift_id} is not a configured gift with actions")
 
     config["Roulette"] = normalized
     save_config(config)
     if is_any_bot_running()[0]:
         signal_reload()
-    return jsonify({"status": "success", "roulette": normalized})
+    resp = jsonify({"status": "success", "roulette": normalized, "warnings": warnings})
+    if warnings:
+        resp.status_code = 200
+    return resp
 
 
 @app.route("/api/roulette/test", methods=["POST"])

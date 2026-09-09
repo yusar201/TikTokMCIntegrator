@@ -190,17 +190,41 @@ class RouletteConfigRouteTest(unittest.TestCase):
         self.assertIn("Settings", self.saved)
         self.assertEqual(self.saved["Settings"]["MinecraftUsername"], "KhitoMC")
 
-    def test_put_enable_without_two_valid_entries_rejected(self):
+    def test_put_enable_without_two_valid_entries_saves_disabled_with_warning(self):
+        # NEVER discard the user's save: invalid-enable persists everything,
+        # forces enabled=False, and returns an explanatory warning.
         resp = self.client.put("/api/roulette/config", json={
             "enabled": True, "trigger_gift_id": "5655", "pool": ["9999"],
         })
-        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertEqual(body["status"], "success")
+        self.assertTrue(body["warnings"])
+        self.assertIsNotNone(self.saved)
+        self.assertFalse(self.saved["Roulette"]["enabled"])
+        self.assertEqual(self.saved["Roulette"]["pool"], ["9999"])  # pool kept
 
-    def test_put_enable_without_trigger_rejected(self):
+    def test_put_enable_without_trigger_saves_disabled_with_warning(self):
         resp = self.client.put("/api/roulette/config", json={
             "enabled": True, "trigger_gift_id": "", "pool": ["5269", "5333"],
         })
-        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertEqual(body["status"], "success")
+        self.assertTrue(any("Trigger" in w for w in body["warnings"]))
+        self.assertIsNotNone(self.saved)
+        self.assertFalse(self.saved["Roulette"]["enabled"])
+        # trigger/pool still persisted so his work is not lost
+        self.assertEqual(self.saved["Roulette"]["pool"], ["5269", "5333"])
+
+    def test_put_valid_enable_succeeds_without_warnings(self):
+        resp = self.client.put("/api/roulette/config", json={
+            "enabled": True, "trigger_gift_id": "5655", "pool": ["5269", "5333"],
+        })
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertEqual(body["warnings"], [])
+        self.assertTrue(self.saved["Roulette"]["enabled"])
 
 
 class RouletteTestSpinRouteTest(unittest.TestCase):

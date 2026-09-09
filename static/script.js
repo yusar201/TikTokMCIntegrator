@@ -58,7 +58,7 @@ function switchPanel(name) {
 // ==========================================
 function showToast(msg, type) {
   const container = document.getElementById('toast-container');
-  const iconMap = { gift: 'fa-gift', follow: 'fa-user-plus', success: 'fa-check', info: 'fa-info', error: 'fa-triangle-exclamation' };
+  const iconMap = { gift: 'fa-gift', follow: 'fa-user-plus', success: 'fa-check', info: 'fa-info', error: 'fa-triangle-exclamation', warning: 'fa-triangle-exclamation' };
   const div = document.createElement('div');
   div.className = `toast ${type}-toast`;
   div.innerHTML = `<i class="fa-solid ${iconMap[type] || 'fa-info'}"></i> ${msg}`;
@@ -5190,10 +5190,12 @@ function renderRouletteTrigger() {
   if (!picker) return;
   picker.innerHTML = '';
   const cfg = rouletteConfig || {};
+  const triggerId = cfg.trigger_gift_id || '';
+
+  // Current trigger display row.
   const cur = document.createElement('div');
   cur.className = 'roulette-trigger-current';
   const icon = document.createElement('img');
-  const triggerId = cfg.trigger_gift_id || '';
   const tIcon = rouletteIcon(triggerId);
   if (tIcon) { icon.src = tIcon; icon.alt = ''; } else { icon.style.visibility = 'hidden'; }
   const name = document.createElement('span');
@@ -5203,6 +5205,42 @@ function renderRouletteTrigger() {
   id.textContent = triggerId ? ('#' + triggerId) : '';
   cur.appendChild(icon); cur.appendChild(name); cur.appendChild(id);
   picker.appendChild(cur);
+
+  // Picker row: choose any configured gift as the trigger.
+  const row = document.createElement('div');
+  row.className = 'roulette-pool-actions';
+  const sel = document.createElement('select');
+  sel.className = 'form-input';
+  sel.id = 'roulette-trigger-select';
+  sel.innerHTML = '<option value="">Set trigger gift…</option>';
+  const gifts = (currentConfig && currentConfig.Gifts) || {};
+  Object.keys(gifts).forEach(gid => {
+    if (String(gid).toLowerCase() === 'globalactions') return;
+    const actions = gifts[gid];
+    if (!Array.isArray(actions) || actions.length === 0) return;
+    const opt = document.createElement('option');
+    opt.value = gid;
+    opt.textContent = `${rouletteDisplayName(gid)} (#${gid})${gid === triggerId ? '  ✓ current' : ''}`;
+    sel.appendChild(opt);
+  });
+  sel.value = triggerId;
+  if (!sel.value) sel.value = '';
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'btn btn-ghost btn-sm';
+  clearBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+  clearBtn.title = 'Clear trigger';
+  clearBtn.onclick = () => {
+    if (rouletteConfig) rouletteConfig.trigger_gift_id = '';
+    renderRouletteTrigger();
+  };
+  sel.onchange = () => {
+    if (!rouletteConfig) rouletteConfig = {};
+    rouletteConfig.trigger_gift_id = sel.value;
+    renderRouletteTrigger();
+  };
+  row.appendChild(sel);
+  row.appendChild(clearBtn);
+  picker.appendChild(row);
 }
 
 function fillRouletteAddSelect() {
@@ -5290,7 +5328,13 @@ async function saveRouletteConfig() {
       roulettePool = [...(body.roulette.pool || [])];
       renderRoulettePool();
     }
-    showToast('Roulette saved — applies live', 'success');
+    renderRouletteWarnings(body.warnings || []);
+    if (body.warnings && body.warnings.length) {
+      showToast('Saved, but roulette left disabled: ' + body.warnings[0], 'warning');
+      if (en) en.checked = false;
+    } else {
+      showToast('Roulette saved — applies live', 'success');
+    }
     initRoulettePanel();
   } catch (e) {
     showToast('Save failed', 'error');
