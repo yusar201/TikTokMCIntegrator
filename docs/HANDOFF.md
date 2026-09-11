@@ -16,6 +16,13 @@ Format:
 
 ---
 
+## 2026-09-11 23:24 — Merged mimo/test-run into main, independently verified (by Hermes)
+- Branch/commit: mimo/test-run → main (ff to 5010ffe); working branch now main
+- Files: templates/index.html (sidebar v0.1.0 badge + cache-bust v50→51 / v62→63), docs/HANDOFF.md
+- Tests: independently verified — Flask test_client GET / → 200 badge present; all three index.html copies hash-identical; NO_NESTED confirmed. Diff reviewed: 5 lines, inline styles only, no .py touched.
+- Deployed: already deployed by MiMo via ./deploy.sh --fast at 23:11 (exe untouched, frontend-only). No re-deploy.
+- Pending: cache-bust bumps v51/v63 reference Hermes' UNCOMMITTED script.js/style.css work — consistent in deployed release/, fine. Next: contained frontend-only Mimo task; one agent in the repo at a time.
+
 ## 2026-09-11 23:11 — Add sidebar version badge (v0.1.0) + first MiMo test-run (by MiMo Code)
 - Branch/commit: mimo/test-run, 63cf46f
 - Files: templates/index.html (sidebar-version badge at footer, inline styles); docs/HANDOFF.md
