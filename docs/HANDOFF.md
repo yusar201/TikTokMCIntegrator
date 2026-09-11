@@ -16,4 +16,9 @@ Format:
 
 ---
 
-*No handoff entries yet.*
+## 2026-09-11 23:11 — Add sidebar version badge (v0.1.0) + first MiMo test-run (by MiMo Code)
+- Branch/commit: mimo/test-run, 63cf46f
+- Files: templates/index.html (sidebar-version badge at footer, inline styles); docs/HANDOFF.md
+- Tests: node --check on static/script.js, gift-studio/studio.js, overlay_previews.js — pass; Flask test_client GET / → 200 with `sidebar-version` + `v0.1.0` present — pass; not run (pytest suite)
+- Deployed: yes — `./deploy.sh --fast` (templates/static only). Verified: exe at release/ root, NO_NESTED, hashes identical across source ↔ release/templates ↔ release/_internal/templates, mtimes 23:11. Bot was not running (tasklist clean).
+- Pending: (1) Working tree still has large uncommitted Hermes/mod work (~20 modified .py + frontend, many untracked files) — my commit only included index.html; those cache-bust bumps (style.css v50→51, script.js v62→63) ride along in 63cf46f but the matching script.js/style.css edits are still uncommitted. (2) Deploy therefore shipped the working-tree script.js/style.css to release/ even though they aren't committed. (3) No .py files touched. (4) Handoff log was empty before this entry — first entry in the file.
