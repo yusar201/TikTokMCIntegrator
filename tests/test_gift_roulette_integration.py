@@ -1,12 +1,19 @@
-"""Integration tests — Roulette reservation inside minecraft_main.on_gift.
+"""Integration tests — Roulette dispatch inside minecraft_main.on_gift.
 
-Covers the plan's dispatch contract:
-- accepted trigger: GlobalActions run, trigger-specific bundle consumed,
-  winner bundle executes at land via ROULETTE_RUNTIME.run_reserved;
-- rejected (busy/cooldown/invalid pool): normal trigger-specific actions run;
-- non-trigger gifts behave byte-for-byte as before;
+Covers the dispatch contract AFTER Roulette became a general action type:
+- a gift/event whose action bundle contains {"type": "roulette"} starts a spin;
+- the gift's own action bundle still executes in full (nothing is "consumed");
+- GlobalActions always run;
+- a rejected spin (busy/cooldown/invalid pool/duplicate final) changes nothing
+  about normal action execution;
+- non-roulette gifts behave byte-for-byte as before;
 - intermediate streak events never spin; duplicate final guarded;
 - log-only mode: no state write, no dispatch, normal logging only.
+
+The previous revision of this file asserted that a *bare* gift (legacy
+trigger_gift_id) auto-spun. That contract was intentionally removed when the
+Roulette tab's trigger-gift picker was deleted — roulette now only fires when a
+`roulette` action is attached, so the fixtures below carry one explicitly.
 """
 from __future__ import annotations
 
@@ -37,7 +44,11 @@ def _gift_event(gift_id="5655", name="rose", *, gift_type=0, repeat_count=1,
 
 ROULETTE_GIFTS = {
     "GlobalActions": [{"type": "minecraft", "command": "global {user}"}],
-    "5655": [{"type": "minecraft", "command": "trigger-specific {user}"}],
+    # Roulette is opt-in per gift/event: the bundle must carry the action.
+    "5655": [
+        {"type": "minecraft", "command": "gift-own {user}"},
+        {"type": "roulette"},
+    ],
     "5269": [
         {"type": "minecraft", "command": "winner-cmd-1 {user}"},
         {"type": "minecraft", "command": "winner-cmd-2 {user}"},
@@ -46,7 +57,7 @@ ROULETTE_GIFTS = {
 }
 
 ROULETTE_CONFIG = {
-    "enabled": True, "trigger_gift_id": "5655",
+    "enabled": True, "trigger_gift_id": "",
     "spin_ms": 5000, "hold_ms": 4000, "cooldown_ms": 2000,
     "pool": ["5269", "5333"],
 }
@@ -133,14 +144,15 @@ class RouletteGiftDispatchTest(unittest.TestCase):
         minecraft_main.streak_tracker.clear()
         minecraft_main.active_streaks.clear()
 
-    def test_accepted_trigger_runs_global_and_winner_not_trigger_specific(self):
+    def test_roulette_action_spins_and_gift_actions_still_run(self):
         import unittest.mock as mock
         runtime = _InstantRuntime()
         capture = _Capture()
 
         async def scenario():
             await minecraft_main.on_gift(_gift_event())
-            # 2nd same-viewer trigger: rejected (duplicate_final guard), normal actions
+            # 2nd same-viewer gift: spin rejected (duplicate_final guard).
+            # The gift's own actions and GlobalActions still run both times.
             await minecraft_main.on_gift(_gift_event())
 
         with mock.patch.object(minecraft_main, "send_minecraft_command", capture), \
@@ -157,16 +169,35 @@ class RouletteGiftDispatchTest(unittest.TestCase):
              mock.patch.object(minecraft_main, "ROULETTE_RUNTIME", runtime):
             asyncio.run(scenario())
 
-        # Spin 1: global + winner bundle only. Trigger-specific consumed on
-        # the accepted spin; the rejected 2nd gift falls back to normal actions.
-        winner_cmds = [c for c in capture.commands if c.startswith("winner-cmd")]
-        trigger_cmds = [c for c in capture.commands if c.startswith("trigger-specific")]
+        # Spin 1 reserves exactly one spin and dispatches the *winner's* full
+        # bundle at land. The winner is random across the pool, so assert the
+        # dispatched bundle's own commands landed rather than assuming which
+        # pool entry won. The rejected 2nd gift dispatches nothing extra, and
+        # neither gift's own actions nor GlobalActions are ever suppressed.
+        own_cmds = [c for c in capture.commands if c.startswith("gift-own")]
         globals_ = [c for c in capture.commands if c.startswith("global")]
-        self.assertEqual(len(winner_cmds), 2)   # full bundle (2 commands)
-        self.assertEqual(len(trigger_cmds), 1)  # only from the rejected 2nd gift
-        self.assertEqual(len(globals_), 2)      # both real gifts keep GlobalActions
+        self.assertEqual(len(own_cmds), 2)      # both gifts keep their own actions
+        self.assertEqual(len(globals_), 2)      # both gifts keep GlobalActions
         self.assertEqual(runtime.reserved, 1)
         self.assertEqual(len(runtime.dispatched), 1)
+
+        winner_actions = list(runtime.dispatched[0].winner_actions)
+        # The dispatched bundle must be the *winner's* configured bundle verbatim
+        # (pool gifts 5269/5333) — never the trigger gift's own actions and never
+        # GlobalActions. The winner is random, so accept either pool member.
+        pool_bundles = [ROULETTE_GIFTS["5269"], ROULETTE_GIFTS["5333"]]
+        self.assertIn(winner_actions, pool_bundles)
+        self.assertNotEqual(winner_actions, ROULETTE_GIFTS["5655"])
+        self.assertNotEqual(winner_actions, ROULETTE_GIFTS["GlobalActions"])
+
+        # Every executable action in the winning bundle must have run at land.
+        winner_ctx = runtime.dispatched[0].winner_context
+        for action in winner_actions:
+            if action.get("type") == "minecraft":
+                expected = action["command"]
+                for key, val in winner_ctx.items():
+                    expected = expected.replace("{" + key + "}", str(val))
+                self.assertIn(expected, capture.commands)
 
     def test_non_trigger_gift_unchanged(self):
         import unittest.mock as mock
@@ -210,7 +241,7 @@ class RouletteGiftDispatchTest(unittest.TestCase):
             asyncio.run(minecraft_main.on_gift(_gift_event()))
 
         self.assertEqual(runtime.reserved, 0)
-        self.assertIn("trigger-specific RouletteFan", capture.commands)
+        self.assertIn("gift-own RouletteFan", capture.commands)
         self.assertIn("global RouletteFan", capture.commands)
 
     def test_streak_intermediate_never_spins_final_spins_once(self):

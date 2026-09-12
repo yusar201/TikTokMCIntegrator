@@ -184,12 +184,18 @@ def _should_skip_action_execution() -> bool:
     return _is_log_only_mode_enabled()
 
 
-async def execute_actions(actions, context=None, send_mc_command=None):
-    """Execute a list of actions in order — skip everything if LogOnlyMode is ON."""
+async def execute_actions(actions, context=None, send_mc_command=None, spin_roulette=None):
+    """Execute a list of actions in order — skip everything if LogOnlyMode is ON.
+
+    This wrapper mirrors ``actions.execute_actions``'s full signature so callers
+    can supply their own roulette spinner. When none is given, live wallet reads
+    use the bot's own `_try_start_roulette_spin` (the pre-existing behaviour).
+    """
     if _should_skip_action_execution():
         return  # Skip execution entirely; events already log what was skipped
     return await _orig_execute_actions(
-        actions, context, send_mc_command, spin_roulette=_try_start_roulette_spin
+        actions, context, send_mc_command,
+        spin_roulette=spin_roulette or _try_start_roulette_spin,
     )
 
 if _is_debug_mode_enabled():

@@ -912,6 +912,9 @@ def simulate_configured_gift():
             gift_meta=catalog_entry,
             send_mc_command=build_dashboard_sender(config, log=log),
         ))
+        for action_type in result.get("skipped_actions") or []:
+            log(f"[SKIP] '{action_type}' action not run by the simulator — "
+                f"use Roulette tab → Test Spin.")
         return jsonify(result)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
