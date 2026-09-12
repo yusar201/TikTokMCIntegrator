@@ -17,7 +17,7 @@ Format:
 ---
 
 ## 2026-09-12 08:33 — Integration pass over the roulette action type: 3 seams closed, suite green, redeployed (by Hermes)
-- Branch/commit: mimo/roulette-action → main, 9c4a3fd (code) / 4ee7575 (this docs entry); main fast-forwarded, nothing pushed
+- Branch/commit: mimo/roulette-action → main, code fix 9c4a3fd; this docs entry is the commit directly after it. main fast-forwarded, nothing pushed.
 - Files: tests/test_gift_roulette_integration.py, tests/test_points_viewer_modal_frontend.py, minecraft_main.py, gift_simulation.py, app.py
 - Tests: full suite `pytest -q` → **1374 passed** (was 1371 passed / 1 failed before this pass). Roulette integration file re-run 6x for the random-winner assertion. py_compile clean on all touched modules.
 - Deployed: yes — `bash deploy.sh --full` at 08:25. Verified: NO_NESTED, exe mtime fresh (dist 08:25:02 → release 08:25:08), index/script/style/studio.js hash-identical across source ↔ release ↔ release/_internal, config/data/logs/assets/addons preserved, oneblock + survival_rush add-ons present in BOTH release/addons and release/_internal/addons. Live smoke test of the rebuilt exe: /health 200 in 2s, GET / 200 (roulette buttons present, 0 `trigger_gift_id` leftovers, sidebar v0.1.0), /api/roulette/config 200, /api/gifts/simulate 405 on GET. Process stopped, port 5000 released.
