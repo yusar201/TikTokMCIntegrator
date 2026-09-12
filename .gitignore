@@ -107,11 +107,13 @@ bot.spec
 # Local rollback copies of the Survival Rush bridge mod
 addons/*/mods/disabled-backup/
 
-# Minecraft mod JARs are build artifacts (built from the separate forge-mod repo)
-# or third-party drops — never source. They stay on disk; keeping them out of a
-# PUBLIC repo also avoids redistributing third-party mods.
-addons/*/mods/*.jar
 
 # Downloaded TikTok gift animation media (sibling of the already-ignored
 # gift-assets manifest). Re-fetched on demand by assets/gift_assets/downloader.py.
 assets/gift_assets/*.mp4
+
+# The add-on's shipped JARs ARE part of the pack — tests/test_survival_rush_deploy_contract.py
+# asserts survivalrushbridge-1.0.0.jar and tiktokbridge-1.0.0.jar exist. Only the local
+# rollback copies are excluded.
+addons/*/mods/*.jar.bak*
+addons/*/mods/*.jar.pre-*
