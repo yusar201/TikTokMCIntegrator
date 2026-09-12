@@ -14,8 +14,11 @@ History stored in: song_history.json
 Config stored in:  song_config.json
 """
 
+import base64
+import hashlib
 import json
 import os
+import secrets
 import time
 import threading
 import logging
@@ -26,8 +29,15 @@ import sys
 
 # Centralized path layout (config/ data/ logs/ assets/) — single frozen-aware root.
 import paths
+from spotify_app_config import SPOTIFY_CLIENT_ID
 
 BASE_DIR = paths.BASE_DIR
+
+SPOTIFY_REDIRECT_URI = "http://127.0.0.1:5000/api/spotify/callback"
+SPOTIFY_SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing"
+_PENDING_OAUTH_TTL_SECONDS = 600
+_pending_oauth = {}
+_pending_oauth_lock = threading.Lock()
 
 TOKEN_FILE = paths.data("song_spotify_token.json")
 CONFIG_FILE = paths.data("song_config.json")
@@ -158,9 +168,6 @@ def get_default_config():
         },
         "revoke_permission": "requestor",
         "overlay_enabled": True,
-        "spotify_client_id": "",
-        "spotify_client_secret": "",
-        "spotify_redirect_uri": "http://127.0.0.1:5000/api/spotify/callback",
         "enabled": True
     }
 
@@ -177,20 +184,29 @@ def load_config():
         # Merge defaults for any missing keys, including nested permission blocks
         merged = dict(defaults)
         merged.update(cfg)
+        # Developer credentials belonged to the legacy confidential-client flow.
+        # Never surface or re-save them now that desktop auth uses bundled PKCE.
+        for obsolete in ("spotify_client_id", "spotify_client_secret", "spotify_redirect_uri"):
+            merged.pop(obsolete, None)
         for key in ("play_permission", "skip_permission"):
             nested = dict(defaults.get(key, {}))
             nested.update(cfg.get(key, {}) if isinstance(cfg.get(key), dict) else {})
             merged[key] = nested
+        if any(key in cfg for key in ("spotify_client_id", "spotify_client_secret", "spotify_redirect_uri")):
+            save_config(merged)
         return merged
     except (json.JSONDecodeError, IOError):
         return dict(defaults)
 
 
 def save_config(data):
-    """Save song config to file."""
+    """Save song config without legacy Spotify developer credentials."""
+    clean = dict(data)
+    for obsolete in ("spotify_client_id", "spotify_client_secret", "spotify_redirect_uri"):
+        clean.pop(obsolete, None)
     with _write_lock:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+            json.dump(clean, f, indent=2)
         logger.info("Song config saved")
 
 
@@ -245,6 +261,13 @@ def get_valid_token():
     except Exception:
         return None
 
+    # Tokens issued by the old secret-based flow cannot be refreshed safely once
+    # the secret is removed. Force one clean reconnect to establish PKCE tokens.
+    if token.get("oauth_flow") != "pkce":
+        logger.info("Discarding legacy Spotify token; PKCE reconnect required")
+        clear_token()
+        return None
+
     expires_at = token.get("expires_at", 0)
     if expires_at and time.time() < expires_at - 60:
         return token  # Still valid
@@ -270,21 +293,19 @@ def get_valid_token():
         if time.time() < _token_refresh_until:
             return token
 
-        cfg = load_config()
-        client_id = cfg.get("spotify_client_id", "")
-        client_secret = cfg.get("spotify_client_secret", "")
-        if not client_id or not client_secret:
+        client_id = get_spotify_client_id()
+        if not client_id:
             return None
 
         try:
+            refresh_data = {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token_val,
+                "client_id": client_id,
+            }
             resp = req.post(
                 "https://accounts.spotify.com/api/token",
-                data={
-                    "grant_type": "refresh_token",
-                    "refresh_token": refresh_token_val,
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                },
+                data=refresh_data,
                 timeout=10,
             )
             if resp.status_code != 200:
@@ -322,6 +343,7 @@ def get_valid_token():
                 _token_refresh_until = time.time() + _TOKEN_REFRESH_COOLDOWN
                 return None
             new_token["expires_at"] = int(time.time()) + new_token.get("expires_in", 3600)
+            new_token["oauth_flow"] = "pkce"
             if "refresh_token" not in new_token:
                 new_token["refresh_token"] = refresh_token_val
 
@@ -335,26 +357,66 @@ def get_valid_token():
         _token_refresh_lock.release()
 
 
-# ── OAuth Flow ─────────────────────────────────────────────────────────────────
+# ── OAuth Flow (Authorization Code + PKCE) ─────────────────────────────────────
 
 import urllib.parse
 
 
-def get_auth_url(client_id, redirect_uri):
-    """Generate the Spotify authorization URL."""
-    scopes = "user-read-playback-state user-modify-playback-state user-read-currently-playing"
-    return (
-        f"https://accounts.spotify.com/authorize"
-        f"?response_type=code"
-        f"&client_id={client_id}"
-        f"&scope={urllib.parse.quote(scopes)}"
-        f"&redirect_uri={urllib.parse.quote(redirect_uri)}"
-    )
+def get_spotify_client_id():
+    """Return the public Spotify application ID bundled with the desktop app."""
+    return SPOTIFY_CLIENT_ID.strip()
 
 
-def handle_callback(code, client_id, client_secret, redirect_uri):
-    """Exchange authorization code for token."""
+def clear_pending_oauth():
+    """Clear temporary in-memory PKCE state (used by disconnect/tests)."""
+    with _pending_oauth_lock:
+        _pending_oauth.clear()
+
+
+def _prune_pending_oauth(now=None):
+    now = time.time() if now is None else now
+    expired = [state for state, item in _pending_oauth.items()
+               if now - item.get("created_at", 0) > _PENDING_OAUTH_TTL_SECONDS]
+    for state in expired:
+        _pending_oauth.pop(state, None)
+
+
+def begin_pkce_authorization():
+    """Create one short-lived PKCE authorization request for Spotify."""
+    client_id = get_spotify_client_id()
+    if not client_id:
+        return {"error": "TikTokMCIntegrator Spotify app is not configured"}
+
+    verifier = secrets.token_urlsafe(64)[:96]
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("ascii")).digest()
+    ).rstrip(b"=").decode("ascii")
+    state = secrets.token_urlsafe(32)
+    with _pending_oauth_lock:
+        _prune_pending_oauth()
+        _pending_oauth[state] = {"code_verifier": verifier, "created_at": time.time()}
+
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "scope": SPOTIFY_SCOPES,
+        "redirect_uri": SPOTIFY_REDIRECT_URI,
+        "state": state,
+        "code_challenge_method": "S256",
+        "code_challenge": challenge,
+    }
+    return {"url": "https://accounts.spotify.com/authorize?" + urllib.parse.urlencode(params)}
+
+
+def handle_pkce_callback(code, state):
+    """Validate OAuth state and exchange a Spotify code using its PKCE verifier."""
     import requests as req
+
+    with _pending_oauth_lock:
+        _prune_pending_oauth()
+        pending = _pending_oauth.pop(state, None) if state else None
+    if not pending:
+        return {"error": "Spotify authorization state is invalid or expired. Please connect again."}
 
     try:
         resp = req.post(
@@ -362,42 +424,31 @@ def handle_callback(code, client_id, client_secret, redirect_uri):
             data={
                 "grant_type": "authorization_code",
                 "code": code,
-                "redirect_uri": redirect_uri,
-                "client_id": client_id,
-                "client_secret": client_secret,
+                "redirect_uri": SPOTIFY_REDIRECT_URI,
+                "client_id": get_spotify_client_id(),
+                "code_verifier": pending["code_verifier"],
             },
             timeout=10,
         )
         if resp.status_code != 200:
-            print(f"[SPOTIFY] Token exchange failed: {resp.status_code} {resp.text}")
+            logger.warning("Spotify PKCE token exchange failed: %s %s", resp.status_code, resp.text)
             return {"error": f"Spotify returned {resp.status_code}: {resp.text}"}
-
         if not resp.text:
-            print("[SPOTIFY] Token exchange returned empty body")
-            return {"error": "Spotify returned empty response"}
-
+            return {"error": "Spotify returned an empty response"}
         try:
             token = resp.json()
         except ValueError:
-            print(f"[SPOTIFY] Token exchange returned non-JSON: {resp.text[:200]}")
-            return {"error": f"Spotify returned non-JSON response: {resp.text[:200]}"}
-
+            return {"error": "Spotify returned an invalid response"}
         if "access_token" not in token:
-            print(f"[SPOTIFY] No access_token in response: {token}")
             return {"error": "Spotify did not return an access token"}
 
         token["expires_at"] = int(time.time()) + token.get("expires_in", 3600)
-        try:
-            save_token(token)
-            print(f"[SPOTIFY] Token saved to {TOKEN_FILE}")
-        except Exception as e:
-            print(f"[SPOTIFY] Failed to save token: {e}")
-            return {"error": f"Failed to save token: {e}"}
-
-        return {"success": True, "message": "Connected to Spotify!"}
-    except Exception as e:
-        print(f"[SPOTIFY] Callback error: {e}")
-        return {"error": str(e)}
+        token["oauth_flow"] = "pkce"
+        save_token(token)
+        return {"status": "success", "message": "Connected to Spotify!"}
+    except Exception as exc:
+        logger.error("Spotify PKCE callback error: %s", exc)
+        return {"error": str(exc)}
 
 
 # Global rate-limit tracking
@@ -586,25 +637,42 @@ def _spotify_put(endpoint, data=None):
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def get_connection_status():
-    """Return a dict with connection status info."""
+    """Return authorization and active-device status separately."""
     token = get_valid_token()
     if not token:
-        return {"connected": False, "error": "No token — please connect Spotify"}
+        return {
+            "authorized": False,
+            "connected": False,
+            "needs_active_device": False,
+            "error": "No token - please connect Spotify",
+        }
 
     player = get_current_playback()
     if "error" in player:
-        # If the error message contains "No active device" we treat it differently
         err_msg = player["error"]
-        return {"connected": False, "error": err_msg}
+        needs_device = "active device" in err_msg.lower()
+        return {
+            "authorized": True,
+            "connected": False,
+            "needs_active_device": needs_device,
+            "error": err_msg,
+        }
 
-    # If player data is empty (204) or has no item/device, there's no active device
+    # Spotify returns 204/empty playback until the user activates a device.
     is_playing = player.get("is_playing", False)
     device_name = player.get("device_name", "")
     if not device_name and not player.get("item"):
-        return {"connected": False, "error": "No active Spotify device — open Spotify and play something"}
+        return {
+            "authorized": True,
+            "connected": False,
+            "needs_active_device": True,
+            "error": "Open Spotify and play something first to activate a device",
+        }
 
     return {
+        "authorized": True,
         "connected": True,
+        "needs_active_device": False,
         "device": device_name,
         "playing": is_playing,
         "item": player.get("item"),

@@ -38,6 +38,22 @@ if __name__ == '__main__' and len(sys.argv) > 1:
         run()
         sys.exit(0)
 
+# Default desktop mode is single-instance. This check stays above the heavy app
+# imports so a second double-click can wake the existing window and exit quickly.
+from single_instance import acquire_single_instance
+
+_single_instance_guard = None
+_single_instance_error = None
+if __name__ == '__main__':
+    try:
+        _single_instance_guard = acquire_single_instance(_start_listener=False)
+    except Exception as exc:
+        # Fail open: a broken Windows API call must not make the app unlaunchable.
+        _single_instance_error = exc
+    else:
+        if not _single_instance_guard.is_primary:
+            raise SystemExit(0)
+
 from PIL import Image, ImageDraw
 import pystray
 from waitress import serve
@@ -157,27 +173,45 @@ def create_icon_image():
 
 
 # ── Tray menu actions ──────────────────────────────────────────────────────────
-def open_dashboard(icon, item):
-    """Bring the native window forward, or fall back to a browser tab.
-
-    NOTE: this fires on pystray's thread, not the webview main thread. We only
-    touch pywebview through its own thread-safe APIs (show/restore), and if the
-    window is gone we open a browser — never create a webview window off-thread.
-    """
+def _bring_window_forward():
+    """Show/maximize the pywebview window, with a Win32 focus fallback."""
     global _window
+    brought_forward = False
     try:
         if _window is not None:
             try:
                 _window.show()
+                brought_forward = True
             except Exception:
                 pass
             try:
                 _window.maximize()
+                brought_forward = True
             except Exception:
                 pass
-            return
     except Exception:
         pass
+
+    # A second user-launched process usually has foreground permission, but its
+    # direct Win32 attempt can race WebView startup. The primary repeats it here
+    # after receiving the named activation event.
+    try:
+        from single_instance import focus_existing_window
+        brought_forward = focus_existing_window() or brought_forward
+    except Exception:
+        pass
+    return brought_forward
+
+
+def open_dashboard(icon=None, item=None):
+    """Bring the native window forward, or fall back to a browser tab.
+
+    NOTE: this fires on pystray's thread, not the webview main thread. We only
+    touch pywebview through its own thread-safe APIs (show/maximize), and if the
+    window is gone we open a browser — never create a webview window off-thread.
+    """
+    if _bring_window_forward():
+        return
     webbrowser.open(URL)
 
 
@@ -309,6 +343,45 @@ def _wait_then_load():
         pass
 
 
+def _register_gift_studio_folder_picker(webview_module):
+    """Expose the native Windows folder dialog to the local Studio API.
+
+    The HTTP request handling `/output-folder/browse` runs on a waitress worker,
+    but pywebview's `create_file_dialog` marshals the native dialog to its UI
+    thread. Registration itself starts no worker, timer, or polling loop, so the
+    unopened Studio keeps zero idle cost.
+    """
+    from gift_card_studio import output as gift_studio_output
+
+    if _window is None:
+        gift_studio_output.register_folder_picker(None)
+        return
+
+    def choose_folder():
+        chosen = _window.create_file_dialog(
+            webview_module.FOLDER_DIALOG,
+            allow_multiple=False,
+        )
+        if not chosen:
+            return None
+        # pywebview returns a tuple/list even for a single directory.
+        if isinstance(chosen, (tuple, list)):
+            return chosen[0]
+        return chosen
+
+    gift_studio_output.register_folder_picker(choose_folder)
+
+
+
+def _clear_gift_studio_folder_picker():
+    """Browser fallback has no native dialog; prevent a stale window closure."""
+    try:
+        from gift_card_studio import output
+        output.register_folder_picker(None)
+    except Exception:
+        pass
+
+
 def _show_close_warning_async(source="window"):
     """Show close warning after the native closing event returns.
 
@@ -353,6 +426,11 @@ def _launch_window():
         _log(f"pywebview import failed ({e}); using browser fallback.")
         return False
 
+    # pywebview disables downloads by default. The gift editor exports its PNG
+    # through a blob-backed <a download> link, so WebView2 silently ignored the
+    # click even though the same code worked in a normal browser.
+    webview.settings['ALLOW_DOWNLOADS'] = True
+
     start_target = _splash_url() or URL
     try:
         _window = webview.create_window(
@@ -367,11 +445,13 @@ def _launch_window():
             text_select=True,
         )
         _window.events.closing += _on_window_closing
+        _register_gift_studio_folder_picker(webview)
         _log(f"Native window created (target={start_target}).")
     except Exception as e:
         _log(f"webview.create_window failed ({e}); using browser fallback.")
         _log(traceback.format_exc())
         _window = None
+        _clear_gift_studio_folder_picker()
         return False
 
     # Kick off the Python-side readiness poll that swaps splash → dashboard.
@@ -390,12 +470,21 @@ def _launch_window():
         _log(f"webview.start failed ({e}); using browser fallback.")
         _log(traceback.format_exc())
         _window = None
+        _clear_gift_studio_folder_picker()
         return False
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     _log("=== TikTok MC Integrator starting ===")
+    if _single_instance_error is not None:
+        _log(f"Single-instance guard unavailable; continuing normally: {_single_instance_error}")
+    elif _single_instance_guard is not None:
+        def _on_second_launch():
+            _log("Second launch detected; bringing existing window forward.")
+            _bring_window_forward()
+        _single_instance_guard.start_listener(_on_second_launch)
+        _log("Single-instance guard active.")
 
     # Ensure profiles/config exist before Flask starts.
     try:

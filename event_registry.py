@@ -42,6 +42,7 @@ from TikTokLive.events import (
     LinkLayerEvent,
     LinkMicArmiesEvent,
     LinkMicBattleEvent,
+    LinkMicBattleItemCardEvent,
     LinkMicBattlePunishFinishEvent,
     LinkMicFanTicketMethodEvent,
     LinkMicLayoutStateEvent,
@@ -352,6 +353,14 @@ EVENT_REGISTRY = {
         "Fires when a PK/battle starts or updates between streamers.",
         "battle",
         ["user", "mc"],
+        "medium",
+    ),
+    "LinkMicBattleItemCardEvent": _evt(
+        LinkMicBattleItemCardEvent,
+        "Battle Power-Up",
+        "Fires when a battle item card/power-up is obtained, awarded, used, or applied.",
+        "battle",
+        ["battle_id", "msg_type", "award_reason"],
         "medium",
     ),
     "LinkMicArmiesEvent": _evt(

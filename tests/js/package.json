@@ -1,0 +1,6 @@
+{
+  "name": "gift-studio-tests",
+  "private": true,
+  "type": "module",
+  "//": "Lets `node --test tests/js/` load the ES-module test files."
+}

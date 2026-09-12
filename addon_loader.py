@@ -21,6 +21,7 @@ from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
 import paths
+import addon_runtime_registry
 from utils import load_json, save_json
 
 ADDON_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
@@ -203,6 +204,7 @@ def set_enabled(addon_id: str, enabled: bool) -> Dict[str, Any]:
     _save_state(st)
     addon = load_addon(addon_id)
     assert addon is not None
+    addon_runtime_registry.set_enabled(addon_id, bool(enabled))
     return addon
 
 
@@ -224,6 +226,7 @@ def update_config(addon_id: str, config: Dict[str, Any]) -> Dict[str, Any]:
     _save_state(st)
     addon = load_addon(addon_id)
     assert addon is not None
+    addon_runtime_registry.set_config(addon_id, addon.get("config") or {})
     return addon
 
 

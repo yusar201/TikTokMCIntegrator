@@ -9,7 +9,7 @@ a = Analysis(
     hiddenimports=[
         'spotipy', 'spotipy.oauth2', 'spotipy.client', 'spotify_handler',
         # Imported only inside minecraft_main.run_bot(), so declare explicitly.
-        'reconnect_policy',
+        'reconnect_policy', 'reconnect_diagnostics',
         'edge_tts', 'tts_effects',
         # pywebview native window (Edge WebView2 via pythonnet/WinForms).
         # These are resolved at RUNTIME through the CLR, so PyInstaller can't
@@ -21,6 +21,9 @@ a = Analysis(
         'pystray._win32', 'engineio.async_drivers.threading',
         # dynamic import used by optional Gift Animation Downloader
         'assets.gift_assets.downloader', 'assets.gift_assets.manifest',
+        # Gift catalog union/sync/backfill. httpx is imported lazily inside
+        # gift_catalog_sync so the sync never costs anything when disabled.
+        'gift_catalog', 'gift_catalog_sync', 'gift_catalog_backfill', 'httpx',
     ],
     hookspath=[],
     hooksconfig={},

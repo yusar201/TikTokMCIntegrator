@@ -99,3 +99,19 @@ test_user_attr2.py
 
 # PyInstaller local specs generated outside the maintained project spec
 bot.spec
+
+# Hermes/MiMo agent scratch + Windows redirect artifacts
+.hermes_visual/
+/NUL
+
+# Local rollback copies of the Survival Rush bridge mod
+addons/*/mods/disabled-backup/
+
+# Minecraft mod JARs are build artifacts (built from the separate forge-mod repo)
+# or third-party drops — never source. They stay on disk; keeping them out of a
+# PUBLIC repo also avoids redistributing third-party mods.
+addons/*/mods/*.jar
+
+# Downloaded TikTok gift animation media (sibling of the already-ignored
+# gift-assets manifest). Re-fetched on demand by assets/gift_assets/downloader.py.
+assets/gift_assets/*.mp4

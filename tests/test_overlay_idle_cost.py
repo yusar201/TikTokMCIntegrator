@@ -68,7 +68,44 @@ def test_top_showcase_payload_contains_both_existing_summary_winners(tmp_path, m
     response = dashboard.app.test_client().get("/api/stats/gifts?summary=topshowcase")
 
     assert response.status_code == 200
-    assert response.get_json() == {"topgift": entries[2], "topstreak": entries[1]}
+    body = response.get_json()
+    assert body["topgift"] == entries[2]
+    assert body["topstreak"] == entries[1]
+    assert body["layout"] in {"left", "center", "right"}
+
+
+def test_top_card_summaries_carry_dashboard_layout_for_all_three_overlays(tmp_path, monkeypatch):
+    """Top Gift, Top Streak, and Top Showcase payloads all expose the layout key."""
+    entries = [
+        {"gift_id": "1", "sender": "gifter", "gift_name": "Rose", "diamond_count": 500, "repeat_count": 9},
+    ]
+    (tmp_path / "gift_log.json").write_text(json.dumps(entries), encoding="utf-8")
+    (tmp_path.parent / "topgift_layout.json").parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(stats, "BASE_DIR", str(tmp_path))
+    monkeypatch.setattr(stats, "TOP_GIFT_LAYOUT_FILE", tmp_path / "topgift_layout.json")
+    (tmp_path / "topgift_layout.json").write_text(json.dumps({"layout": "right"}), encoding="utf-8")
+    stats._GIFT_SUMMARY_CACHE.update({"signature": None, "topgift": [], "topstreak": []})
+    client = dashboard.app.test_client()
+
+    top_gift = client.get("/api/stats/gifts?summary=topgift")
+    top_streak = client.get("/api/stats/gifts?summary=topstreak")
+    showcase = client.get("/api/stats/gifts?summary=topshowcase")
+
+    assert top_gift.get_json() == {"topgift": entries[0], "layout": "right"}
+    assert top_streak.get_json() == {"entries": entries, "layout": "right"}
+    assert showcase.get_json() == {"topgift": entries[0], "topstreak": entries[0], "layout": "right"}
+
+
+def test_overlay_applies_layout_attribute_to_streak_cards():
+    html = OVERLAY.read_text(encoding="utf-8")
+
+    # Streak handler consumes {entries, layout} payloads and sets data-tslayout
+    assert "document.body.setAttribute('data-tslayout', tsLayout);" in html
+    assert 'body[data-tslayout="left"] .ts-card' in html
+    assert 'body[data-tslayout="center"] .ts-card' in html
+    assert 'body[data-tslayout="right"] .ts-card' in html
+    # Showcase passes the shared layout through to the streak card too
+    assert "handleTopStreak({ entries: [streak], layout: (data && data.layout) || undefined });" in html
 
 
 def test_top_showcase_switches_every_five_seconds_and_preserves_existing_cards():
@@ -97,6 +134,7 @@ def test_compact_gift_summaries_preserve_top_gift_and_streak_selection(tmp_path,
     top_streak = client.get("/api/stats/gifts?summary=topstreak")
 
     assert top_gift.status_code == 200
-    assert top_gift.get_json() == [entries[2]]
+    # Payload is wrapped with the dashboard layout key; winner selection unchanged.
+    assert top_gift.get_json()["topgift"] == entries[2]
     assert top_streak.status_code == 200
-    assert top_streak.get_json() == [entries[1]]
+    assert top_streak.get_json()["entries"] == [entries[1]]

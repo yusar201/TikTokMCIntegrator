@@ -75,7 +75,7 @@ needs_full_build() {
     local dist_ts src_ts
     dist_ts=$(stat -c %Y "$DIST/TikTokMCIntegrator.exe")
     # Backend/build inputs only. templates/static are handled by fast deploy.
-    src_ts=$(latest_mtime "*.py" "routes/**/*.py" "assets/**/*.py" "gift_assets/**/*.py" "*.spec" "requirements.txt" "config.example.yml" "icon.ico" "build.bat")
+    src_ts=$(latest_mtime "*.py" "routes/**/*.py" "assets/**/*.py" "gift_assets/**/*.py" "addons/**/*.py" "addons/**/*.yml" "addons/**/*.yaml" "*.spec" "requirements.txt" "config.example.yml" "icon.ico" "build.bat")
     [ "$src_ts" -gt "$dist_ts" ]
 }
 
@@ -110,11 +110,13 @@ copy_templates_static_from_source() {
 }
 
 copy_bundled_addons_from_source() {
-    # Merge bundled source add-ons into release/addons without deleting user-installed add-ons.
-    mkdir -p "$RELEASE/addons"
+    # Merge bundled source add-ons into both runtime-visible locations without
+    # deleting user-installed add-ons from release/addons.
+    mkdir -p "$RELEASE/addons" "$RELEASE/_internal/addons"
     if [ -d "addons" ]; then
         find addons -mindepth 1 -maxdepth 1 -type d -print0 | while IFS= read -r -d '' addon_dir; do
             cp -r "$addon_dir" "$RELEASE/addons/"
+            cp -r "$addon_dir" "$RELEASE/_internal/addons/"
         done
     fi
 }
@@ -122,6 +124,13 @@ copy_bundled_addons_from_source() {
 copy_full_dist_to_release() {
     if [ ! -f "$DIST/TikTokMCIntegrator.exe" ] || [ ! -d "$DIST/_internal" ]; then
         echo "dist/ missing exe or _internal — build broken"
+        exit 1
+    fi
+    if powershell.exe -NoProfile -Command \
+        'if (Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "TikTokMCIntegrator.exe" }) { exit 0 } else { exit 1 }' \
+        >/dev/null 2>&1; then
+        echo "DEPLOY BLOCKED: release/TikTokMCIntegrator.exe is running. Close it before --full deploy."
+        echo "No release artifacts were modified."
         exit 1
     fi
     rm -rf "$RELEASE/_internal" "$RELEASE/templates" "$RELEASE/static"
@@ -151,8 +160,12 @@ verify_common() {
         echo "  WARNING: templates/static not refreshed (timestamps too old)"
         exit 1
     fi
-    if [ -d "addons" ] && [ ! -e "$RELEASE/addons/oneblock/addon.yml" ]; then
-        echo "  WARNING: bundled addons not refreshed"
+    if [ -d "addons/oneblock" ] && [ ! -e "$RELEASE/addons/oneblock/addon.yml" ]; then
+        echo "  WARNING: OneBlock add-on not refreshed"
+        exit 1
+    fi
+    if [ -d "addons/survival_rush" ] && { [ ! -e "$RELEASE/addons/survival_rush/addon.yml" ] || [ ! -e "$RELEASE/_internal/addons/survival_rush/addon.yml" ]; }; then
+        echo "  WARNING: Survival Rush add-on not refreshed in both release locations"
         exit 1
     fi
 }

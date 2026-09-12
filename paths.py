@@ -22,12 +22,25 @@ idempotent and safe to run from both the dashboard and bot processes
 concurrently (move-if-dest-absent, wrapped in try/except).
 """
 import os
+import re
 import sys
 import shutil
 
 # ---- The one frozen-aware root resolution -------------------------------
-BASE_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) \
-           else os.path.dirname(os.path.abspath(__file__))
+# When frozen: sys.executable = TikTokMCIntegrator.exe → dirname() = release/
+# When run via 'python app.py': check if __file__ contains '/release/' in path
+# If it does, trust that; otherwise fall back to parent of __file__.
+if getattr(sys, "frozen", False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    # Not frozen: resolve based on invocation context
+    abs_file = os.path.abspath(__file__)
+    if 'release' in abs_file.split(os.sep):
+        # Called from release/app.py → trust that location
+        BASE_DIR = os.path.dirname(abs_file)
+    else:
+        # Called from source dir or main.py → trust the project root
+        BASE_DIR = os.path.dirname(abs_file)
 
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -79,6 +92,27 @@ def addons(name=""):
     """Full path for an add-on directory/file in addons/."""
     base = os.path.basename(name) if name else ""
     return os.path.join(ADDONS_DIR, base) if base else ADDONS_DIR
+
+
+_SAFE_ADDON_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+_SAFE_DATA_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+
+def addon_data(addon_id, name):
+    """Return a path scoped to ``data/addons/<addon_id>/``.
+
+    Both components must be plain names. Rejecting separators and dot-only
+    values keeps add-ons from escaping their own runtime-state directory.
+    """
+    addon_id = str(addon_id or "")
+    name = str(name or "")
+    if not _SAFE_ADDON_ID.fullmatch(addon_id):
+        raise ValueError("invalid add-on id")
+    if name in {".", ".."} or not _SAFE_DATA_NAME.fullmatch(name):
+        raise ValueError("invalid add-on data filename")
+    directory = os.path.join(DATA_DIR, "addons", addon_id)
+    os.makedirs(directory, exist_ok=True)
+    return os.path.join(directory, name)
 
 
 def resolve(name):

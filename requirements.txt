@@ -1,6 +1,8 @@
 # TikTok Live + Minecraft integration
-TikTokLive==6.6.5
-mcrcon==0.3.3
+TikTokLive==7.0.1
+# Keep the generated schema matched to TikTokLive's battle-item-card decoder.
+TikTokLiveProto==0.2.2
+mcrcon==0.7.0
 requests>=2.28.0
 PyYAML>=6.0
 
@@ -18,6 +20,11 @@ edge-tts>=6.1
 
 # Build
 pyinstaller>=6.0
+
+# Gift Card Studio export (PNG/GIF). Imported only when an export runs, never at
+# app start. resvg-py is a self-contained prebuilt wheel: unlike cairosvg it
+# needs no external cairo DLL, which matters for the frozen exe.
+resvg-py>=0.5.0
 
 # Test suite
 pytest>=8.0
