@@ -16,6 +16,13 @@ Format:
 
 ---
 
+## 2026-09-12 07:12 — Roulette becomes a general action type (by MiMo Code)
+- Branch/commit: mimo/roulette-action, db14508
+- Files: actions.py (new `roulette` type + spin_roulette callback), minecraft_main.py (_try_start_roulette_spin; removed trigger_gift_id gift-handler path), app.py (no longer requires trigger gift; GET warns on legacy trigger), static/script.js (action row/collect + custom-event button; removed trigger picker), templates/index.html (Roulette button on all 4 action bars; trigger section removed; script v64), tests/test_actions_roulette.py (new), tests/test_roulette_routes.py
+- Tests: py_compile actions/minecraft_main/app OK; node --check script.js OK; pytest tests/test_actions_roulette.py tests/test_roulette_routes.py tests/test_gift_roulette.py → 54 passed; Flask test_client GET / → 200 with roulette button + no trigger picker + v64
+- Deployed: yes — bash deploy.sh --full with PYTHON_EXE=/mnt/c/Python313/python.exe (first PowerShell `./deploy.sh --full` half-deployed: exe+_internal ok, root templates/static missing; recovered). Verified: exe mtime 07:10:20, NO_NESTED, state dirs intact, hashes identical across source ↔ release/templates ↔ release/_internal/templates and script.js copies, trigger picker gone, roulette buttons present.
+- Pending: (1) Commit includes prior uncommitted Hermes edits on the same 7 files (289+/163−) — diff carefully. (2) Existing profiles with only `trigger_gift_id` will NOT auto-spin until a Roulette action is attached on a gift/event. (3) Working tree still has other uncommitted .py/untracked work not in this commit. (4) One agent in repo at a time — notified other MiMo session before starting.
+
 ## 2026-09-11 23:24 — Merged mimo/test-run into main, independently verified (by Hermes)
 - Branch/commit: mimo/test-run → main (ff to 5010ffe); working branch now main
 - Files: templates/index.html (sidebar v0.1.0 badge + cache-bust v50→51 / v62→63), docs/HANDOFF.md
