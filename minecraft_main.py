@@ -45,7 +45,8 @@ from constants import *
 from sim_console_log import append_line as append_sim_console_line
 import bot_status
 
-# Monkey-patch TikTokLive v7 badge bug (still present in 7.0.0b2):
+# Monkey-patch TikTokLive v7 badge bug (still present in 7.0.1 — custom_proto.py
+# unchanged from 7.0.0b2; verified by wheel diff):
 # _get_all_badge_info() was written for v2
 # schema but v3 Schema V3 renamed everything in BadgeStruct:
 #   badges → badge_list, badge_scene → scene_type (enum), log_extra → privilege_log_extra
@@ -187,7 +188,9 @@ async def execute_actions(actions, context=None, send_mc_command=None):
     """Execute a list of actions in order — skip everything if LogOnlyMode is ON."""
     if _should_skip_action_execution():
         return  # Skip execution entirely; events already log what was skipped
-    return await _orig_execute_actions(actions, context, send_mc_command)
+    return await _orig_execute_actions(
+        actions, context, send_mc_command, spin_roulette=_try_start_roulette_spin
+    )
 
 if _is_debug_mode_enabled():
     try:
@@ -875,7 +878,7 @@ def append_superfan_log(nick, event_type="new_superfan", unique_id="", avatar_ur
     except Exception as e:
         print(f"Error writing superfan log: {e}")
 
-# EVENT HANDLERS (v7 — TikTokLive 7.0.0b2)
+# EVENT HANDLERS (v7 — TikTokLive 7.0.1)
 # ==========================================
 
 @client.on(ConnectEvent)
@@ -1064,6 +1067,58 @@ def _log_roulette_task_done(task) -> None:
             print(f"[ROULETTE] Spin task failed: {exc}")
     except Exception:
         pass
+
+
+async def _try_start_roulette_spin(ctx, source="live"):
+    """Start a Gift Roulette spin if config/pool/cooldown allow.
+
+    Wired as the `roulette` action type via execute_actions. Returns True when
+    a spin was reserved and scheduled.
+    """
+    if _should_skip_action_execution():
+        return False
+    if not ROULETTE_CONFIG.get("enabled"):
+        print("[ROULETTE] Spin skipped — roulette disabled")
+        return False
+    try:
+        catalog_rows = await asyncio.to_thread(
+            gift_catalog.load_catalog, paths.data("available_gifts.json")
+        )
+        prepared = gift_roulette.prepare_spin(
+            ROULETTE_CONFIG,
+            GIFT_ACTIONS,
+            ROULETTE_NAMES,
+            ROULETTE_DESCRIPTIONS,
+            gift_roulette.build_catalog_index(catalog_rows),
+            ctx,
+            source=source,
+            profile=_active_profile_name(),
+        )
+        accepted, rl_reason = ROULETTE_RUNTIME.try_reserve(
+            prepared, int(ROULETTE_CONFIG.get("cooldown_ms", 2000))
+        )
+        if accepted:
+            ROULETTE_RUNTIME.mark_reserved_started()
+            spin_task = asyncio.create_task(
+                ROULETTE_RUNTIME.run_reserved(
+                    prepared,
+                    lambda actions, context: execute_actions(
+                        actions, context, send_minecraft_command
+                    ),
+                )
+            )
+            spin_task.add_done_callback(_log_roulette_task_done)
+            nick = str(ctx.get("user", "") or "?")
+            print(f"[ROULETTE] Spin started ({prepared.spin_id}) — trigger: {nick}")
+            return True
+        print(f"[ROULETTE] Trigger rejected ({rl_reason})")
+        return False
+    except gift_roulette.RouletteValidationError as rl_err:
+        print(f"[ROULETTE] Pool invalid: {rl_err}")
+        return False
+    except Exception as rl_err:
+        print(f"[ROULETTE] Unexpected error: {rl_err}")
+        return False
 
 
 def safe_json_write(data, log_file, retries=3, delay=0.05):
@@ -1592,55 +1647,6 @@ async def on_gift(event: GiftEvent):
         completed_gift = (gift_type != 1) or (not is_streaking)
         immediate_batches = []
 
-        # ── Gift Roulette reservation (plan: .hermes/plans/roulette-randomizer.md) ──
-        # Gift-level randomization: a successful reservation CONSUMES this gift's
-        # specific bundle and schedules the winner's full bundle to execute at
-        # land time. GlobalActions and all real-gift bookkeeping stay unchanged.
-        # Rejected spins (busy/cooldown/invalid pool/duplicate final) fall back
-        # to the normal gift-specific actions so the viewer keeps their reward.
-        # No YAML/disk work here: ROULETTE_CONFIG is a hot-reloaded in-memory
-        # snapshot, and the catalog index is built only when the trigger hits.
-        roulette_reserved = False
-        if (completed_gift and ROULETTE_CONFIG.get("enabled")
-                and not _should_skip_action_execution()
-                and str(gift_id) == str(ROULETTE_CONFIG.get("trigger_gift_id", ""))):
-            try:
-                catalog_rows = await asyncio.to_thread(
-                    gift_catalog.load_catalog, paths.data("available_gifts.json")
-                )
-                prepared = gift_roulette.prepare_spin(
-                    ROULETTE_CONFIG,
-                    GIFT_ACTIONS,
-                    ROULETTE_NAMES,
-                    ROULETTE_DESCRIPTIONS,
-                    gift_roulette.build_catalog_index(catalog_rows),
-                    ctx,
-                    source="live",
-                    profile=_active_profile_name(),
-                )
-                accepted, rl_reason = ROULETTE_RUNTIME.try_reserve(
-                    prepared, int(ROULETTE_CONFIG.get("cooldown_ms", 2000))
-                )
-                if accepted:
-                    ROULETTE_RUNTIME.mark_reserved_started()
-                    roulette_reserved = True
-                    spin_task = asyncio.create_task(
-                        ROULETTE_RUNTIME.run_reserved(
-                            prepared,
-                            lambda actions, context: execute_actions(
-                                actions, context, send_minecraft_command
-                            ),
-                        )
-                    )
-                    spin_task.add_done_callback(_log_roulette_task_done)
-                    print(f"[ROULETTE] Spin started ({prepared.spin_id}) — trigger: {nick} {gift_name}")
-                else:
-                    print(f"[ROULETTE] Trigger rejected ({rl_reason}) — normal gift actions for {nick}")
-            except gift_roulette.RouletteValidationError as rl_err:
-                print(f"[ROULETTE] Pool invalid, normal gift actions for {nick}: {rl_err}")
-            except Exception as rl_err:
-                print(f"[ROULETTE] Unexpected error, normal gift actions for {nick}: {rl_err}")
-
         # Send global reward only when NOT streaking or it's a non-streakable gift.
         # Combine global + gift-specific actions into one concurrent dispatch so
         # rapid alternating gifts never wait behind persistence or each other.
@@ -1677,9 +1683,7 @@ async def on_gift(event: GiftEvent):
                     gift_ctx["amount"] = str(delta)
                     immediate_batches.append((GIFT_ACTIONS.get(gift_key, []), gift_ctx))
 
-            elif completed_gift and not roulette_reserved:
-                # Roulette consumed this trigger's specific bundle; the winner
-                # bundle fires at land time from the background spin task.
+            elif completed_gift:
                 immediate_batches.append((GIFT_ACTIONS.get(gift_key, []), dict(ctx)))
 
         # This is the latency-critical boundary. Minecraft actions already

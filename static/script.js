@@ -25,7 +25,7 @@ let giftStudioModule = null;
 let giftStudioLoad = null;
 async function activateGiftStudio() {
   if (!giftStudioLoad) {
-    giftStudioLoad = import('/static/gift-studio/studio.js?v=11').then(mod => (giftStudioModule = mod));
+    giftStudioLoad = import('/static/gift-studio/studio.js?v=12').then(mod => (giftStudioModule = mod));
   }
   await giftStudioLoad;
   return giftStudioModule.activate();
@@ -338,6 +338,84 @@ function ensureBotCloseWarningModal() {
 window.showBotCloseWarning = function(source = 'window') {
   const modal = ensureBotCloseWarningModal();
   modal.classList.add('active');
+};
+
+// ==========================================
+// THEMED CONFIRM DIALOG (replaces native confirm())
+// Same Stardew wood-panel shell as the bot close guard.
+// Usage: if (!(await appConfirm({ title, message, confirmText, tone, icon }))) return;
+// ==========================================
+function ensureAppConfirmModal() {
+  let modal = document.getElementById('app-confirm-modal');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.id = 'app-confirm-modal';
+  modal.className = 'bot-close-warning-overlay app-confirm-overlay';
+  modal.innerHTML = `
+    <div class="bot-close-warning-box app-confirm-box">
+      <div class="bot-close-warning-corner c1"></div>
+      <div class="bot-close-warning-corner c2"></div>
+      <div class="bot-close-warning-corner c3"></div>
+      <div class="bot-close-warning-corner c4"></div>
+      <div class="bot-close-warning-header">
+        <div class="bot-close-warning-icon" id="app-confirm-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+        <div>
+          <h3 id="app-confirm-title">Are you sure?</h3>
+          <p id="app-confirm-subtitle" style="display:none;"></p>
+        </div>
+      </div>
+      <div class="bot-close-warning-body" id="app-confirm-body"></div>
+      <div class="bot-close-warning-actions">
+        <button class="btn btn-ghost" id="app-confirm-cancel"><i class="fa-solid fa-xmark"></i> Cancel</button>
+        <button class="btn btn-danger" id="app-confirm-ok"><i class="fa-solid fa-check"></i> Confirm</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  // Backdrop click and Escape both count as Cancel.
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      const c = modal.querySelector('#app-confirm-cancel');
+      if (c) c.click();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.classList.contains('active')) {
+      const c = modal.querySelector('#app-confirm-cancel');
+      if (c) c.click();
+    }
+  });
+  return modal;
+}
+
+window.appConfirm = function(opts) {
+  const o = typeof opts === 'string' ? { message: opts } : (opts || {});
+  const modal = ensureAppConfirmModal();
+  if (modal._pendingResolve) { modal._pendingResolve(false); modal._pendingResolve = null; }
+  modal.querySelector('#app-confirm-title').textContent = o.title || 'Are you sure?';
+  const sub = modal.querySelector('#app-confirm-subtitle');
+  sub.textContent = o.subtitle || '';
+  sub.style.display = o.subtitle ? '' : 'none';
+  const body = modal.querySelector('#app-confirm-body');
+  body.textContent = o.message || '';
+  body.style.display = o.message ? '' : 'none';
+  const okBtn = modal.querySelector('#app-confirm-ok');
+  okBtn.className = 'btn ' + (o.tone === 'danger' ? 'btn-danger' : 'btn-warning');
+  okBtn.innerHTML = `<i class="fa-solid fa-check"></i> ${o.confirmText || 'Confirm'}`;
+  const icon = modal.querySelector('#app-confirm-icon');
+  icon.className = 'bot-close-warning-icon' + (o.tone === 'danger' ? ' app-confirm-icon-danger' : '');
+  icon.innerHTML = `<i class="fa-solid ${o.icon || 'fa-triangle-exclamation'}"></i>`;
+  modal.classList.add('active');
+  return new Promise(resolve => {
+    function settle(value) {
+      if (!modal._pendingResolve) return;
+      modal._pendingResolve = null;
+      modal.classList.remove('active');
+      resolve(value);
+    }
+    modal._pendingResolve = resolve;
+    modal.querySelector('#app-confirm-ok').onclick = () => settle(true);
+    modal.querySelector('#app-confirm-cancel').onclick = () => settle(false);
+  });
 };
 
 async function fetchViewerStats() {
@@ -1060,7 +1138,11 @@ async function loadOlderChat() {
 
 async function showFullChatHistory() {
   if (chatIsLoadingOlder) return;
-  if (chatTotalCount > 1500 && !confirm(`Load all ${chatTotalCount.toLocaleString()} chat messages? This can be slower after long streams.`)) return;
+  if (chatTotalCount > 1500 && !(await window.appConfirm({
+    title: 'Load Full Chat History',
+    message: `Load all ${chatTotalCount.toLocaleString()} chat messages? This can be slower after long streams.`,
+    confirmText: 'Load All'
+  }))) return;
   enterChatReviewMode();
   chatIsLoadingOlder = true;
   updateChatHistoryControls();
@@ -1995,6 +2077,7 @@ function saveEditingEvent() {
 }
 
 function deleteEditingEvent() {
+  return (async () => {
   if (!editingEventKey) return;
   const registry = eventRegistryData ? eventRegistryData.registry : {};
   const reg = registry[editingEventKey] || {};
@@ -2006,15 +2089,17 @@ function deleteEditingEvent() {
     if (m === 'every_n') name = `Like (every ${intv || '?'} likes)`;
     else if (m === 'every_like') name = 'Like (every like)';
   }
-  if (confirm(`Delete event "${name}"?`)) {
+  if (!(await window.appConfirm({ title: 'Delete Event', message: `Delete event "${name}"?`, confirmText: 'Delete', tone: 'danger', icon: 'fa-trash' }))) return;
     delete currentConfig.Events[editingEventKey];
     closeEditEventModal();
     renderEventsGrid();
     showToast(`Event "${name}" deleted`, 'info');
-  }
+}
+  );
 }
 
 function deleteEvent(eventKey) {
+  return (async () => {
   const registry = eventRegistryData ? eventRegistryData.registry : {};
   const reg = registry[eventKey] || {};
   let name = reg.name || eventKey;
@@ -2025,11 +2110,12 @@ function deleteEvent(eventKey) {
     if (m === 'every_n') name = `Like (every ${intv || '?'} likes)`;
     else if (m === 'every_like') name = 'Like (every like)';
   }
-  if (confirm(`Delete event "${name}"?`)) {
+  if (!(await window.appConfirm({ title: 'Delete Event', message: `Delete event "${name}"?`, confirmText: 'Delete', tone: 'danger', icon: 'fa-trash' }))) return;
     delete currentConfig.Events[eventKey];
     renderEventsGrid();
     showToast(`Event "${name}" deleted`, 'info');
-  }
+}
+  );
 }
 
 function collectEvents() {
@@ -2332,8 +2418,8 @@ function appendActionRowToContainer(container, type, data = null) {
   row.className = 'action-row';
   row.dataset.type = type;
 
-  const typeColors = {minecraft: '#4CAF50', sound: '#FF9800', webhook: '#2196F3', random: '#9C27B0'};
-  const typeIcons = {minecraft: 'fa-terminal', sound: 'fa-volume-high', webhook: 'fa-link', random: 'fa-shuffle'};
+  const typeColors = {minecraft: '#4CAF50', sound: '#FF9800', webhook: '#2196F3', random: '#9C27B0', roulette: '#E91E63'};
+  const typeIcons = {minecraft: 'fa-terminal', sound: 'fa-volume-high', webhook: 'fa-link', random: 'fa-shuffle', roulette: 'fa-dice'};
 
   let fieldsHtml = '';
   if (type === 'minecraft') {
@@ -2375,6 +2461,8 @@ function appendActionRowToContainer(container, type, data = null) {
         `).join('')}
       </div>
       <button class="btn btn-ghost btn-sm" onclick="addRandomSubAction(this)" style="margin-top:4px;"><i class="fa-solid fa-plus"></i> Sub-action</button>`;
+  } else if (type === 'roulette') {
+    fieldsHtml = `<p class="form-hint" style="margin:4px 0;">Starts a Gift Roulette spin when this fires. Pool, timing, and sounds are configured in the Roulette tab. Roulette must be enabled there.</p>`;
   }
 
   row.innerHTML = `
@@ -2431,6 +2519,8 @@ function collectActionsFromContainer(container) {
         if (sv) subs.push(st === 'sound' ? {type: 'sound', file: sv} : {type: st, command: sv});
       });
       if (subs.length > 0) actions.push({type: 'random', actions: subs});
+    } else if (type === 'roulette') {
+      actions.push({type: 'roulette'});
     }
   });
   return actions;
@@ -2599,7 +2689,9 @@ async function saveGiftModal() {
 }
 
 function deleteGiftModal() {
-  if(editingGiftKey && confirm(`Delete ${getGiftDisplayName(editingGiftKey)}?`)) {
+  return (async () => {
+  if (editingGiftKey && !(await window.appConfirm({ title: 'Delete Gift', message: `Delete ${getGiftDisplayName(editingGiftKey)}?`, confirmText: 'Delete', tone: 'danger', icon: 'fa-gift' }))) return;
+  {
     delete currentConfig.Gifts[editingGiftKey];
     if (currentConfig.GiftCategories) delete currentConfig.GiftCategories[editingGiftKey];
     if (currentConfig.GiftNames) delete currentConfig.GiftNames[editingGiftKey];
@@ -2608,6 +2700,7 @@ function deleteGiftModal() {
     populateGifts();
     showToast('Gift deleted', 'info');
   }
+  });
 }
 
 // ==========================================
@@ -2869,7 +2962,8 @@ async function createProfile(duplicate) {
 }
 
 async function deleteProfile(name) {
-  if(confirm(`Delete profile: ${name}?`)) {
+  if (!(await window.appConfirm({ title: 'Delete Profile', message: `Delete profile: ${name}?`, subtitle: 'The bot keeps running with the current profile.', confirmText: 'Delete', tone: 'danger', icon: 'fa-user-slash' }))) return;
+  {
     try {
       const res = await fetch(`/api/profiles/${name}?_=${Date.now()}`, { method: 'DELETE', cache: 'no-store' });
       const data = await res.json();
@@ -3026,6 +3120,7 @@ function renderEventBrowser() {
             <button class="btn btn-ghost btn-sm" onclick="addCustomEventAction('${eventKey}','sound')"><i class="fa-solid fa-volume-high"></i> Sound</button>
             <button class="btn btn-ghost btn-sm" onclick="addCustomEventAction('${eventKey}','webhook')"><i class="fa-solid fa-link"></i> Webhook</button>
             <button class="btn btn-ghost btn-sm" onclick="addCustomEventAction('${eventKey}','random')"><i class="fa-solid fa-shuffle"></i> Random</button>
+            <button class="btn btn-ghost btn-sm" onclick="addCustomEventAction('${eventKey}','roulette')"><i class="fa-solid fa-dice"></i> Roulette</button>
           </div>
         </div>
       `;
@@ -3567,7 +3662,7 @@ async function installAddonFromInput(event) {
 
 async function removeAddon(id) {
   const addon = addonById(id);
-  if (!addon || !confirm(`Remove add-on "${addon.name || id}"?`)) return;
+  if (!addon || !(await window.appConfirm({ title: 'Remove Add-on', message: `Remove add-on "${addon.name || id}"?`, confirmText: 'Remove', tone: 'danger', icon: 'fa-puzzle-piece' }))) return;
   try {
     const res = await fetch(`/api/addons/${encodeURIComponent(id)}/remove`, { method: 'POST' });
     const data = await res.json();
@@ -3825,8 +3920,15 @@ function adjustCoinGoal() {
     .then(() => { document.getElementById('cg-modal-adjust').value = ''; });
 }
 
-function resetCoinGoal() {
-  if (!confirm('Reset current coins to 0? (Goal & label stay.)')) return;
+async function resetCoinGoal() {
+  if (!(await window.appConfirm({
+    title: 'Reset Coin Jar',
+    message: 'Reset current coins to 0?',
+    subtitle: 'Goal & label stay.',
+    confirmText: 'Reset to 0',
+    tone: 'danger',
+    icon: 'fa-coins'
+  }))) return;
   _postCoinGoal({ reset: true }, 'Jar reset to 0!');
 }
 
@@ -4093,8 +4195,8 @@ function saveGiftGoal() {
     .catch(() => showCopyToast('Save failed', true));
 }
 
-function resetGiftGoal() {
-  if (!confirm('Reset current count to 0?')) return;
+async function resetGiftGoal() {
+  if (!(await window.appConfirm({ title: 'Reset Gift Goal', message: 'Reset current count to 0?', confirmText: 'Reset to 0', tone: 'danger', icon: 'fa-gift' }))) return;
   fetch('/api/giftgoal', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -4140,8 +4242,8 @@ function resetTopStreakOverlay() {
   }
 }
 
-function resetTopGifter() {
-  if (!confirm('Reset gifter AND liker rankings for this stream?')) return;
+async function resetTopGifter() {
+  if (!(await window.appConfirm({ title: 'Reset Rankings', message: 'Reset gifter AND liker rankings for this stream?', confirmText: 'Reset', tone: 'danger', icon: 'fa-trophy' }))) return;
   fetch('/api/stats/topgifter/reset', { method: 'POST' })
     .then(r => r.json())
     .then(res => {
@@ -4434,7 +4536,7 @@ async function removeQueueItem(index) {
 }
 
 async function clearSongQueue() {
-  if (!confirm('Clear the entire song queue?')) return;
+  if (!(await window.appConfirm({ title: 'Clear Song Queue', message: 'Clear the entire song queue?', confirmText: 'Clear Queue', tone: 'danger', icon: 'fa-music' }))) return;
   try {
     await fetch('/api/spotify/queue/clear', { method: 'POST' });
     showToast('Queue cleared', 'info');
@@ -4755,7 +4857,7 @@ function renderTtsHistory(entries) {
 }
 
 async function clearTtsHistory() {
-  if (!confirm('Clear all TTS history?')) return;
+  if (!(await window.appConfirm({ title: 'Clear TTS History', message: 'Clear all TTS history?', confirmText: 'Clear History', tone: 'danger', icon: 'fa-comment-dots' }))) return;
   try {
     await fetch('/api/tts/history/clear', { method: 'POST' });
     showToast('History cleared', 'success');
@@ -5185,66 +5287,6 @@ function renderRoulettePool() {
   if (count) count.textContent = roulettePool.length + ' events';
 }
 
-function renderRouletteTrigger() {
-  const picker = document.getElementById('roulette-trigger-picker');
-  if (!picker) return;
-  picker.innerHTML = '';
-  const cfg = rouletteConfig || {};
-  const triggerId = cfg.trigger_gift_id || '';
-
-  // Current trigger display row.
-  const cur = document.createElement('div');
-  cur.className = 'roulette-trigger-current';
-  const icon = document.createElement('img');
-  const tIcon = rouletteIcon(triggerId);
-  if (tIcon) { icon.src = tIcon; icon.alt = ''; } else { icon.style.visibility = 'hidden'; }
-  const name = document.createElement('span');
-  name.textContent = triggerId ? rouletteDisplayName(triggerId) : 'Not configured';
-  const id = document.createElement('span');
-  id.className = 'roulette-pool-id';
-  id.textContent = triggerId ? ('#' + triggerId) : '';
-  cur.appendChild(icon); cur.appendChild(name); cur.appendChild(id);
-  picker.appendChild(cur);
-
-  // Picker row: choose any configured gift as the trigger.
-  const row = document.createElement('div');
-  row.className = 'roulette-pool-actions';
-  const sel = document.createElement('select');
-  sel.className = 'form-input';
-  sel.id = 'roulette-trigger-select';
-  sel.innerHTML = '<option value="">Set trigger gift…</option>';
-  const gifts = (currentConfig && currentConfig.Gifts) || {};
-  Object.keys(gifts).forEach(gid => {
-    if (String(gid).toLowerCase() === 'globalactions') return;
-    const actions = gifts[gid];
-    if (!Array.isArray(actions) || actions.length === 0) return;
-    const opt = document.createElement('option');
-    opt.value = gid;
-    opt.textContent = `${rouletteDisplayName(gid)} (#${gid})${gid === triggerId ? '  ✓ current' : ''}`;
-    sel.appendChild(opt);
-  });
-  sel.value = triggerId;
-  if (!sel.value) sel.value = '';
-  const clearBtn = document.createElement('button');
-  clearBtn.className = 'btn btn-ghost btn-sm';
-  clearBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
-  clearBtn.title = 'Clear trigger';
-  clearBtn.onclick = () => {
-    if (rouletteConfig) rouletteConfig.trigger_gift_id = '';
-    renderRouletteTrigger();
-    saveRouletteConfig();
-  };
-  sel.onchange = () => {
-    if (!rouletteConfig) rouletteConfig = {};
-    rouletteConfig.trigger_gift_id = sel.value;
-    renderRouletteTrigger();
-    saveRouletteConfig();
-  };
-  row.appendChild(sel);
-  row.appendChild(clearBtn);
-  picker.appendChild(row);
-}
-
 function fillRouletteAddSelect() {
   const sel = document.getElementById('roulette-add-select');
   if (!sel) return;
@@ -5283,7 +5325,6 @@ async function initRoulettePanel() {
       if (hold) hold.value = Math.round((rouletteConfig.hold_ms || 4000) / 1000);
       if (cd) cd.value = Math.round((rouletteConfig.cooldown_ms || 2000) / 1000);
     }
-    renderRouletteTrigger();
     renderRoulettePool();
     fillRouletteAddSelect();
     renderRouletteWarnings(body.warnings || []);
@@ -5341,7 +5382,6 @@ function rouletteCollectPayload() {
   const cd = document.getElementById('roulette-cooldown-ms');
   return {
     enabled: !!(en && en.checked),
-    trigger_gift_id: (rouletteConfig && rouletteConfig.trigger_gift_id) || '',
     spin_ms: Math.round(parseFloat(spin ? spin.value : '5') * 1000),
     hold_ms: Math.round(parseFloat(hold ? hold.value : '4') * 1000),
     cooldown_ms: Math.round(parseFloat(cd ? cd.value : '2') * 1000),

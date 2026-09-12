@@ -204,22 +204,28 @@ class RouletteConfigRouteTest(unittest.TestCase):
         self.assertFalse(self.saved["Roulette"]["enabled"])
         self.assertEqual(self.saved["Roulette"]["pool"], ["9999"])  # pool kept
 
-    def test_put_enable_without_trigger_saves_disabled_with_warning(self):
+    def test_put_enable_without_trigger_succeeds(self):
+        # Trigger is now a Roulette action on gifts/events — not a Roulette-tab gift.
         resp = self.client.put("/api/roulette/config", json={
-            "enabled": True, "trigger_gift_id": "", "pool": ["5269", "5333"],
+            "enabled": True, "pool": ["5269", "5333"],
         })
         self.assertEqual(resp.status_code, 200)
         body = resp.get_json()
         self.assertEqual(body["status"], "success")
-        self.assertTrue(any("Trigger" in w for w in body["warnings"]))
+        self.assertEqual(body["warnings"], [])
         self.assertIsNotNone(self.saved)
-        self.assertFalse(self.saved["Roulette"]["enabled"])
-        # trigger/pool still persisted so his work is not lost
+        self.assertTrue(self.saved["Roulette"]["enabled"])
         self.assertEqual(self.saved["Roulette"]["pool"], ["5269", "5333"])
+
+    def test_get_warns_about_legacy_trigger_gift(self):
+        resp = self.client.get("/api/roulette/config")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertTrue(any("Legacy trigger" in w for w in body["warnings"]))
 
     def test_put_valid_enable_succeeds_without_warnings(self):
         resp = self.client.put("/api/roulette/config", json={
-            "enabled": True, "trigger_gift_id": "5655", "pool": ["5269", "5333"],
+            "enabled": True, "pool": ["5269", "5333"],
         })
         self.assertEqual(resp.status_code, 200)
         body = resp.get_json()

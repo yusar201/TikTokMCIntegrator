@@ -469,8 +469,10 @@ def get_roulette_config():
             warnings.append(f"Pool entry {gift_id} is not a configured gift with actions")
     if normalized["enabled"] and len(valid_ids) < 2:
         warnings.append("Enable requires at least 2 valid pool entries")
-    if normalized["enabled"] and not normalized["trigger_gift_id"]:
-        warnings.append("No trigger gift configured")
+    if normalized["trigger_gift_id"]:
+        warnings.append(
+            "Legacy trigger gift is unused — attach a Roulette action on any gift or event instead"
+        )
 
     resp = jsonify({
         "roulette": normalized,
@@ -507,13 +509,9 @@ def update_roulette_config():
     # NEVER discard the user's save. Invalid-enable does not 400: it persists
     # everything with enabled=False and returns a warning the panel shows.
     warnings = []
-    if normalized["enabled"]:
-        if not normalized["trigger_gift_id"]:
-            warnings.append("Trigger gift required — Roulette saved but left disabled")
-            normalized["enabled"] = False
-        elif len(entries) < 2:
-            warnings.append("Needs at least 2 valid pool entries — Roulette saved but left disabled")
-            normalized["enabled"] = False
+    if normalized["enabled"] and len(entries) < 2:
+        warnings.append("Needs at least 2 valid pool entries — Roulette saved but left disabled")
+        normalized["enabled"] = False
     for gift_id in normalized["pool"]:
         if gift_id not in {e["gift_id"] for e in entries}:
             warnings.append(f"Pool entry {gift_id} is not a configured gift with actions")
@@ -534,13 +532,14 @@ def test_roulette_spin():
 
     The bot and dashboard are separate processes with independent in-memory
     runtimes; a test spin while the bot is live could interleave state writes
-    and double-fire Minecraft actions. Live testing uses the real trigger gift.
+    and double-fire Minecraft actions. Live testing uses a Roulette action
+    on a gift or event.
     """
     if is_any_bot_running()[0]:
         return jsonify({
             "status": "error",
             "message": "Stop the bot before running an executable Test Spin. "
-                       "While live, test with the real trigger gift instead.",
+                       "While live, attach a Roulette action on a gift or event instead.",
         }), 409
 
     payload = request.get_json(silent=True) or {}

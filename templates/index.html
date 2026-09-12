@@ -441,6 +441,7 @@
           <button class="btn btn-ghost btn-sm" onclick="addEventActionRow('gift','sound','global-actions')"><i class="fa-solid fa-volume-high"></i> Sound</button>
           <button class="btn btn-ghost btn-sm" onclick="addEventActionRow('gift','webhook','global-actions')"><i class="fa-solid fa-link"></i> Webhook</button>
           <button class="btn btn-ghost btn-sm" onclick="addEventActionRow('gift','random','global-actions')"><i class="fa-solid fa-shuffle"></i> Random</button>
+          <button class="btn btn-ghost btn-sm" onclick="addEventActionRow('gift','roulette','global-actions')"><i class="fa-solid fa-dice"></i> Roulette</button>
         </div>
       </div>
 
@@ -485,11 +486,9 @@
 
         <div class="roulette-grid">
           <div class="roulette-col">
-            <h3><i class="fa-solid fa-bullseye"></i> Trigger</h3>
-            <div class="form-hint">Send this exact gift to start a spin (completed gifts only; streak triggers spin once at the end).</div>
-            <div id="roulette-trigger-picker" class="roulette-picker"></div>
+            <div class="form-hint" style="margin-bottom:12px;">Attach a <strong>Roulette</strong> action on any gift or event (Gifts / Events / Global Actions) to start a spin. Pool, timing, and sounds are configured here.</div>
 
-            <h3 style="margin-top:14px;"><i class="fa-solid fa-clock"></i> Timing</h3>
+            <h3><i class="fa-solid fa-clock"></i> Timing</h3>
             <div class="roulette-timings">
               <label><span>Spin (s)</span><input type="number" id="roulette-spin-ms" class="form-input" min="2" max="10" step="1" value="5"></label>
               <label><span>Hold (s)</span><input type="number" id="roulette-hold-ms" class="form-input" min="1" max="10" step="1" value="4"></label>
@@ -1574,6 +1573,7 @@
           <button class="btn btn-ghost btn-sm" onclick="addActionRow('sound')"><i class="fa-solid fa-volume-high"></i> Sound</button>
           <button class="btn btn-ghost btn-sm" onclick="addActionRow('webhook')"><i class="fa-solid fa-link"></i> Webhook</button>
           <button class="btn btn-ghost btn-sm" onclick="addActionRow('random')"><i class="fa-solid fa-shuffle"></i> Random</button>
+          <button class="btn btn-ghost btn-sm" onclick="addActionRow('roulette')"><i class="fa-solid fa-dice"></i> Roulette</button>
         </div>
       </div>
     </div>
@@ -1629,6 +1629,7 @@
           <button class="btn btn-ghost btn-sm" onclick="addAddEventAction('sound')"><i class="fa-solid fa-volume-high"></i> Sound</button>
           <button class="btn btn-ghost btn-sm" onclick="addAddEventAction('webhook')"><i class="fa-solid fa-link"></i> Webhook</button>
           <button class="btn btn-ghost btn-sm" onclick="addAddEventAction('random')"><i class="fa-solid fa-shuffle"></i> Random</button>
+          <button class="btn btn-ghost btn-sm" onclick="addAddEventAction('roulette')"><i class="fa-solid fa-dice"></i> Roulette</button>
         </div>
       </div>
     </div>
@@ -1674,6 +1675,7 @@
           <button class="btn btn-ghost btn-sm" onclick="addEditEventAction('sound')"><i class="fa-solid fa-volume-high"></i> Sound</button>
           <button class="btn btn-ghost btn-sm" onclick="addEditEventAction('webhook')"><i class="fa-solid fa-link"></i> Webhook</button>
           <button class="btn btn-ghost btn-sm" onclick="addEditEventAction('random')"><i class="fa-solid fa-shuffle"></i> Random</button>
+          <button class="btn btn-ghost btn-sm" onclick="addEditEventAction('roulette')"><i class="fa-solid fa-dice"></i> Roulette</button>
         </div>
       </div>
     </div>
@@ -1772,6 +1774,6 @@
 <script src="/static/overlay_previews.js?v=1"></script>
 <script src="/static/points_period.js?v=1"></script>
 <script src="/static/song_history_filters.js?v=1"></script>
-<script src="/static/script.js?v=63"></script>
+<script src="/static/script.js?v=64"></script>
 </body>
 </html>

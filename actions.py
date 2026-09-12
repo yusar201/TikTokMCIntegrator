@@ -6,6 +6,7 @@ Supports action types:
   - sound: play audio (local file or URL)
   - webhook: HTTP request
   - random: pick one action randomly from a list
+  - roulette: start a Gift Roulette spin (pool/timing in Roulette config)
 
 Config format:
   - type: minecraft
@@ -25,6 +26,7 @@ Config format:
         command: "give {mc} diamond 1"
       - type: minecraft
         command: "give {mc} emerald 1"
+  - type: roulette               # no fields — uses Roulette tab config
 
 Backward compat:
   Old format (list of strings) auto-converts to minecraft actions.
@@ -150,13 +152,14 @@ def migrate_config_actions(config):
 
 # ── Action execution ─────────────────────────────────────────────────────────
 
-async def execute_actions(actions, context=None, send_mc_command=None):
+async def execute_actions(actions, context=None, send_mc_command=None, spin_roulette=None):
     """Execute a list of actions in order.
 
     Args:
         actions: list of action dicts
         context: dict with template variables ({user}, {mc}, {amount}, etc.)
         send_mc_command: async function to send RCON command
+        spin_roulette: async function(ctx) that starts a Gift Roulette spin
     """
     if not actions:
         return
@@ -177,7 +180,9 @@ async def execute_actions(actions, context=None, send_mc_command=None):
             elif action_type == "webhook":
                 await _execute_webhook(action, ctx)
             elif action_type == "random":
-                await _execute_random(action, ctx, send_mc_command)
+                await _execute_random(action, ctx, send_mc_command, spin_roulette)
+            elif action_type == "roulette":
+                await _execute_roulette(action, ctx, spin_roulette)
             else:
                 print(f"[ACTIONS] unknown action type: {action_type}")
         except Exception as e:
@@ -186,6 +191,13 @@ async def execute_actions(actions, context=None, send_mc_command=None):
     # Actions from one TikTok event are independent. Start them together so a
     # multi-command gift does not wait for a fresh RCON round-trip per command.
     await asyncio.gather(*(run_action(action) for action in actions))
+
+
+def _quote_minecraft_argument(value):
+    """Return one safe Brigadier quoted-string argument."""
+    text = str(value).replace("\r", " ").replace("\n", " ")
+    text = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
 
 
 async def _execute_minecraft(action, ctx, send_mc_command):
@@ -218,7 +230,10 @@ async def _execute_minecraft(action, ctx, send_mc_command):
 
     cmd = _re.sub(r'\{(amount[^}]*)\}', math_replacer, cmd)
 
-    # Template substitution
+    # Safe quoted placeholders are substituted before plain legacy placeholders.
+    # Example: {user_q} -> "Saucy Soup \"VIP\"" for Brigadier string arguments.
+    for key, val in ctx.items():
+        cmd = cmd.replace(f"{{{key}_q}}", _quote_minecraft_argument(val))
     for key, val in ctx.items():
         cmd = cmd.replace(f"{{{key}}}", str(val))
 
@@ -283,14 +298,22 @@ async def _execute_webhook(action, ctx):
     await asyncio.to_thread(_send)
 
 
-async def _execute_random(action, ctx, send_mc_command):
+async def _execute_random(action, ctx, send_mc_command, spin_roulette=None):
     """Pick one action randomly from a list and execute it."""
     choices = action.get("actions", [])
     if not choices:
         return
 
     picked = _random.choice(choices)
-    await execute_actions([picked], ctx, send_mc_command)
+    await execute_actions([picked], ctx, send_mc_command, spin_roulette=spin_roulette)
+
+
+async def _execute_roulette(action, ctx, spin_roulette):
+    """Start a Gift Roulette spin. No fields — pool/timing come from Roulette config."""
+    if not spin_roulette:
+        print("[ACTIONS] roulette action skipped — no spinner wired (dev/test context?)")
+        return
+    await spin_roulette(ctx)
 
 
 # ── Dynamic context builder ──────────────────────────────────────────────────
