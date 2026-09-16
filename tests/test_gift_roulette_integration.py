@@ -4,7 +4,9 @@ Covers the dispatch contract AFTER Roulette became a general action type:
 - a gift/event whose action bundle contains {"type": "roulette"} starts a spin;
 - the gift's own action bundle still executes in full (nothing is "consumed");
 - GlobalActions always run;
-- a rejected spin (busy/cooldown/invalid pool/duplicate final) changes nothing
+- every accepted trigger spins: a trigger arriving while a spin is active or
+  cooling down is queued FIFO and runs after, with its own sender + winner;
+- only duplicate_final / invalid pool / queue_full reject, changing nothing
   about normal action execution;
 - non-roulette gifts behave byte-for-byte as before;
 - intermediate streak events never spin; duplicate final guarded;
@@ -66,9 +68,10 @@ ROULETTE_CONFIG = {
 class _InstantRuntime:
     """Runtime double: no sleep, deterministic winner, records dispatch.
 
-    Mirrors the REAL runtime's accept/reject contract that on_gift depends on:
-    single active slot + duplicate-final guard (unit-tested against the real
-    RouletteRuntime in test_gift_roulette.py). Only the sleep is removed.
+    Mirrors the REAL runtime's queue contract that on_gift depends on:
+    one active slot + FIFO queue + duplicate-final guard (unit-tested
+    against the real RouletteRuntime in test_gift_roulette.py). Only the
+    sleep is removed — queued spins run immediately in arrival order.
     """
 
     DUPLICATE_TTL = 30.0
@@ -76,24 +79,48 @@ class _InstantRuntime:
     def __init__(self, clock=None):
         self.dispatched = []
         self.reserved = 0
+        self.queued = 0
         self.rejected_reasons = []
         self.config = {}
         self._active = False
+        self._queue = []
         self._last_completed = None
         self._clock = clock or (lambda: 1000.0)
 
     def sweep_stale(self):
         return False
 
+    def queue_depth(self):
+        return len(self._queue)
+
+    def cooldown_delay(self):
+        return 0.0
+
+    def claim_pump(self):
+        return True
+
+    def release_pump(self):
+        pass
+
+    def take_next(self):
+        if self._active or not self._queue:
+            return None
+        nxt = self._queue.pop(0)
+        self._active = True
+        self.reserved += 1
+        self.pending = nxt
+        return nxt
+
     def try_reserve(self, prepared, cooldown_ms):
         trigger = prepared.public_state.get("trigger") or {}
         key = (trigger.get("gift_id", ""), trigger.get("user", ""))
-        if self._active:
-            self.rejected_reasons.append("busy")
-            return (False, "busy")
         if self._last_completed == key:
             self.rejected_reasons.append("duplicate_final")
             return (False, "duplicate_final")
+        if self._active:
+            self._queue.append(prepared)
+            self.queued += 1
+            return (True, "queued")
         self._active = True
         self.reserved += 1
         self.pending = prepared
@@ -198,6 +225,62 @@ class RouletteGiftDispatchTest(unittest.TestCase):
                 for key, val in winner_ctx.items():
                     expected = expected.replace("{" + key + "}", str(val))
                 self.assertIn(expected, capture.commands)
+
+    def test_two_rapid_gifts_each_spin_with_own_sender(self):
+        """Two roulette gifts arriving while a spin is active both execute.
+
+        FIFO order: Alice's spin runs first, Bob's queued spin runs after
+        the first winner bundle finishes — each with its own sender name.
+        """
+        import unittest.mock as mock
+        runtime = _InstantRuntime()
+        capture = _Capture()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        real_run = runtime.run_reserved
+
+        async def blocking_run(prepared, execute_bundle, *, sleep=None):
+            started.set()
+            await release.wait()
+            await real_run(prepared, execute_bundle, sleep=sleep)
+
+        runtime.run_reserved = blocking_run
+
+        async def scenario():
+            first = asyncio.create_task(
+                minecraft_main.on_gift(_gift_event(user="Alice")))
+            await started.wait()  # Alice's spin is mid-animation
+            await minecraft_main.on_gift(_gift_event(user="Bob"))  # queued
+            self.assertEqual(runtime.queue_depth(), 1)
+            release.set()
+            await first
+            for _ in range(100):  # let the drain chain finish Bob's spin
+                if len(runtime.dispatched) >= 2:
+                    break
+                await asyncio.sleep(0.01)
+
+        with mock.patch.object(minecraft_main, "send_minecraft_command", capture), \
+             mock.patch.object(minecraft_main, "_should_skip_action_execution", return_value=False), \
+             mock.patch.object(minecraft_main, "_is_gift_downloader_enabled", return_value=False), \
+             mock.patch.object(minecraft_main, "resolve_avatar_url", return_value=""), \
+             mock.patch.object(minecraft_main, "append_gift_log", return_value=""), \
+             mock.patch.object(minecraft_main, "update_gifter_ranking", return_value=None), \
+             mock.patch.object(minecraft_main, "add_coins_to_jar", return_value=None), \
+             mock.patch.object(minecraft_main, "add_to_gift_goal", return_value=None), \
+             mock.patch.object(minecraft_main, "GIFT_ACTIONS", ROULETTE_GIFTS), \
+             mock.patch.object(minecraft_main, "GIFTS_WITH_STREAK_DELTA", set()), \
+             mock.patch.object(minecraft_main, "ROULETTE_CONFIG", ROULETTE_CONFIG), \
+             mock.patch.object(minecraft_main, "ROULETTE_RUNTIME", runtime):
+            asyncio.run(scenario())
+
+        self.assertEqual(runtime.reserved, 2)
+        self.assertEqual(len(runtime.dispatched), 2)
+        # FIFO: Alice first, Bob second, each spin carrying its own sender.
+        users = [d.winner_context["user"] for d in runtime.dispatched]
+        self.assertEqual(users, ["Alice", "Bob"])
+        pool_bundles = [ROULETTE_GIFTS["5269"], ROULETTE_GIFTS["5333"]]
+        for dispatched in runtime.dispatched:
+            self.assertIn(list(dispatched.winner_actions), pool_bundles)
 
     def test_non_trigger_gift_unchanged(self):
         import unittest.mock as mock

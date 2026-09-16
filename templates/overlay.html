@@ -4105,6 +4105,7 @@ function rlBuildRow(entry) {
 // ── Slot sounds (Web Audio, no asset files) ──
 let rlAudioCtx = null;
 let rlTickTimer = null;
+let rlFinishTimer = null;
 let rlLastTickRow = -1;
 
 function rlAudio() {
@@ -4232,6 +4233,10 @@ function rlStartSpin(data) {
 
   // Winner highlight is applied at land via the transition end below.
   if (rlHideAnimTimer) { clearTimeout(rlHideAnimTimer); rlHideAnimTimer = null; }
+  // Cancel the previous spin's pending land so it cannot stop this spin's
+  // ticking or chime a second time.
+  if (rlFinishTimer) { clearTimeout(rlFinishTimer); rlFinishTimer = null; }
+  rlStopTicks();
   wrap.classList.remove('rl-hiding');
   // Restart the pop animation on every new spin (remove/re-add class trick).
   wrap.classList.remove('rl-visible');
@@ -4279,7 +4284,10 @@ function rlStartSpin(data) {
       strip.style.transition = 'transform ' + durationMs.toFixed(0) + 'ms cubic-bezier(.15,.85,.25,1)';
       strip.style.transform = 'translate3d(0, ' + (-distance) + 'px, 0)';
     });
-    setTimeout(finish, durationMs + 50);
+    // Track the land timer so a following spin can cancel it. An untracked
+    // stale timer fired mid-next-spin and called rlStopTicks() + rlChime(),
+    // killing the new spin's ticking and double-chiming the reveal.
+    rlFinishTimer = setTimeout(finish, durationMs + 50);
   }
 
   // Hide after hold expires (server-authoritative hide_at).

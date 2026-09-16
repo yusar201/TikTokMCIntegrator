@@ -9,7 +9,7 @@
   try { if (localStorage.getItem('tmc-theme') === 'light') document.documentElement.setAttribute('data-theme','light'); } catch(e){}
 </script>
 <link rel="stylesheet" href="/static/app-font.css?v=1">
-<link rel="stylesheet" href="/static/style.css?v=51">
+<link rel="stylesheet" href="/static/style.css?v=53">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -434,7 +434,7 @@
       <!-- Global Gift Actions -->
       <div class="form-card">
         <h3><i class="fa-solid fa-earth-americas"></i> Global Gift Actions</h3>
-        <div class="form-hint">These actions run on EVERY gift received. Variables: {gift_name}, {repeat_count}, {user}, {total_coin}, {mc}</div>
+        <div class="form-hint var-hint" id="global-gift-vars">These actions run on EVERY gift received. Variables:</div>
         <div id="global-actions-gift" class="event-actions-container"></div>
         <div style="margin-top:6px; display:flex; gap:4px; flex-wrap:wrap;">
           <button class="btn btn-ghost btn-sm" onclick="addEventActionRow('gift','minecraft','global-actions')"><i class="fa-solid fa-terminal"></i> Minecraft</button>
@@ -1035,6 +1035,7 @@
               <div class="song-settings-row">
                 <label class="song-toggle"><input type="checkbox" id="song-enabled" checked><span>Enable requests</span></label>
                 <label class="song-toggle"><input type="checkbox" id="song-allow-explicit" checked><span>Allow explicit</span></label>
+                <label class="song-toggle"><input type="checkbox" id="song-mc-feedback"><span>Minecraft feedback</span></label>
                 <div class="song-number-field">
                   <label>Queue max</label>
                   <input type="number" id="song-max-total" value="10" min="1" max="50" class="form-input">
@@ -1566,7 +1567,7 @@
       </div>
       <div class="form-group">
         <label>Actions</label>
-        <p class="form-hint">Each action runs in order. Variables: {user}, {mc}, {amount}, {amount*5}, {gift_name}, {total_coin}</p>
+        <p class="form-hint var-hint" id="gift-modal-vars">Each action runs in order. Variables:</p>
         <div id="modal-actions-list"></div>
         <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">
           <button class="btn btn-ghost btn-sm" onclick="addActionRow('minecraft')"><i class="fa-solid fa-terminal"></i> Minecraft</button>
@@ -1774,6 +1775,6 @@
 <script src="/static/overlay_previews.js?v=1"></script>
 <script src="/static/points_period.js?v=1"></script>
 <script src="/static/song_history_filters.js?v=1"></script>
-<script src="/static/script.js?v=64"></script>
+<script src="/static/script.js?v=66"></script>
 </body>
 </html>

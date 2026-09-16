@@ -16,6 +16,13 @@ Format:
 
 ---
 
+## 2026-09-16 10:45 — Sep-14 tooltips + song-mirror, Sep-15 roulette FIFO queue (by Hermes)
+- Branch/commit: main, <this commit>
+- Files: gift_roulette.py (FIFO queue, reveal-window spacing, test-spin exemption), minecraft_main.py (drain chain + pump), app.py (dashboard runtime singleton, queued/test-spin payload, reject messages), spotify_handler.py + static/script.js + templates/index.html (song MC-chat mirror + tooltips), static/style.css, templates/overlay.html (rlFinishTimer), tests/test_gift_roulette.py + test_gift_roulette_integration.py + test_roulette_routes.py, NEW test_song_mc_feedback.py (was untracked, repo root)
+- Tests: targeted 75 passed (roulette unit/integration/routes/actions + song feedback); full suite 1375 passed Sep-15 11:36 on this exact tree (burst-latency flaked once under load avg ~3.1, then green — load variance, test never touches roulette)
+- Deployed: yes — `./deploy.sh --full` Sep-15 11:37, exe mtime dist 11:37:26 → release 11:37:33, queue symbols parsed from exe PYZ, mirror/overlay fixes hash-verified in release/
+- Pending: Khito live-tests a real in-stream gift burst (Test Spin path Khito-approved Sep-15); dashboard needs Ctrl+Shift+R + OBS roulette source refresh (script.js cached). Nothing pushed.
+
 ## 2026-09-12 08:33 — Integration pass over the roulette action type: 3 seams closed, suite green, redeployed (by Hermes)
 - Branch/commit: mimo/roulette-action → main, code fix 9c4a3fd; this docs entry is the commit directly after it. main fast-forwarded, nothing pushed.
 - Files: tests/test_gift_roulette_integration.py, tests/test_points_viewer_modal_frontend.py, minecraft_main.py, gift_simulation.py, app.py

@@ -115,6 +115,91 @@ def push_song_feedback(nick, feedback_type, icon, title, detail=""):
     except Exception as e:
         print(f"[SONG FEEDBACK] Failed to write: {e}")
     print(f"[SONG FEEDBACK] {feedback_type}: {title}")
+    # Optional mirror to Minecraft chat. Off by default; enabled + scoped by
+    # mc_feedback config. Never let a chat-mirror failure eat the toast.
+    try:
+        _mc_feedback_send(nick, feedback_type, title, detail)
+    except Exception as e:
+        print(f"[SONG MC-FEEDBACK] Failed to mirror to Minecraft: {e}")
+
+
+# ── Minecraft chat feedback mirror (optional, off by default) ─────────────────
+# Mirrors song-queue feedback (queued / skipped / pulled / errors / denied) into
+# Minecraft chat via tellraw so players in-game can see what's happening with
+# song requests. Zero changes to playback behavior — read-only mirror.
+
+_MC_FEEDBACK_COLORS = {
+    "success": "green",
+    "error": "red",
+    "denied": "gold",
+}
+_MC_FEEDBACK_ICONS = {
+    "success": "✔",
+    "error": "✖",
+    "denied": "✖",
+}
+_MC_FEEDBACK_ENABLED_KEYS = {
+    "success": "notify_success",
+    "error": "notify_errors",
+    "denied": "notify_denied",
+}
+
+
+def _mc_feedback_config() -> dict:
+    """Live-read the Minecraft feedback mirror config from song_config.json."""
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            cfg = json.load(f) or {}
+        return cfg.get("mc_feedback") or {}
+    except Exception:
+        return {}
+
+
+def _mc_feedback_escape(text) -> str:
+    """Escape a string for safe inclusion inside a JSON tellraw string."""
+    s = str(text or "")
+    s = s.replace("\\", "\\\\").replace('"', '\\"')
+    s = s.replace("\n", " ").replace("\r", " ")
+    return s
+
+
+def _mc_feedback_send(nick, feedback_type, title, detail="") -> None:
+    """Send one feedback line to Minecraft chat if enabled for this type.
+
+    Disabled by default and per-type. Silently does nothing when the connector
+    is unreachable so the song system never depends on Minecraft being up.
+    """
+    cfg = _mc_feedback_config()
+    if not cfg.get("enabled", False):
+        return
+    if not cfg.get(_MC_FEEDBACK_ENABLED_KEYS.get(feedback_type, ""), False):
+        return
+
+    import minecraft_main
+
+    color = _MC_FEEDBACK_COLORS.get(feedback_type, "white")
+    icon = _MC_FEEDBACK_ICONS.get(feedback_type, "•")
+    prefix = str(cfg.get("prefix", "[Music]")).strip() or "[Music]"
+
+    # title already starts with "@nick —". Strip the leading @ for chat.
+    body = _mc_feedback_escape(title.lstrip().lstrip("@"))
+    parts = [
+        f'{{"text":"{_mc_feedback_escape(prefix)} ","color":"dark_purple","italic":true}}',
+        f'{{"text":"{icon} ","color":"{color}"}}',
+        f'{{"text":"{body}","color":"{color}"}}',
+    ]
+    if detail:
+        parts.append(
+            f'{{"text":" {_mc_feedback_escape(detail)}","color":"gray","italic":true}}'
+        )
+    tellraw_cmd = "tellraw @a " + "[" + ",".join(parts) + "]"
+
+    try:
+        # Sync twin — spotify_handler has no event loop, and the async wrapper
+        # would silently drop the command if called un-awaited.
+        minecraft_main.send_minecraft_command_sync(tellraw_cmd)
+    except Exception as e:
+        print(f"[SONG MC-FEEDBACK] tellraw send failed: {e}")
 
 
 def get_and_clear_feedback():
@@ -168,7 +253,18 @@ def get_default_config():
         },
         "revoke_permission": "requestor",
         "overlay_enabled": True,
-        "enabled": True
+        "enabled": True,
+        # Minecraft chat mirror for song feedback. Off by default; when enabled,
+        # song events (queued / skipped / pulled / errors / denied) are also said
+        # in Minecraft chat via tellraw. Purely a read-only mirror of the toast —
+        # it changes no playback behavior.
+        "mc_feedback": {
+            "enabled": False,
+            "prefix": "[Music]",
+            "notify_success": True,   # queued / skipped / pulled
+            "notify_errors": True,    # search failures, queue full, etc.
+            "notify_denied": True,    # permission denied, cooldown
+        },
     }
 
 

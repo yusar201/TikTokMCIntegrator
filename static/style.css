@@ -1889,6 +1889,36 @@ textarea.form-input:focus {
   color: var(--accent);
 }
 
+/* Hoverable template-variable chips (gift modal, global actions, event modals) */
+.var-hint { line-height: 2; }
+.var-chip {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--accent);
+  cursor: help;
+  white-space: nowrap;
+}
+.var-chip:hover { border-color: var(--border-active); }
+#var-tip {
+  position: fixed;
+  z-index: 9999;
+  max-width: 260px;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.45;
+  font-family: var(--font-body);
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-active);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  pointer-events: none;
+}
+
 .eb-event-actions {
   margin-top: 12px;
   padding-top: 12px;

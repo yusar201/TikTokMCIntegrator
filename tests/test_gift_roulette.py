@@ -222,7 +222,7 @@ class _FixedPick:
 
 
 def _prepared(*, trigger_gift_id="5655", user="Viewer", spin_ms=5000,
-              hold_ms=4000, rng=None, now=1000.0):
+              hold_ms=4000, rng=None, now=1000.0, source="live"):
     cfg = gift_roulette.normalize_config({
         "enabled": True, "trigger_gift_id": trigger_gift_id,
         "spin_ms": spin_ms, "hold_ms": hold_ms, "cooldown_ms": 2000,
@@ -241,7 +241,7 @@ def _prepared(*, trigger_gift_id="5655", user="Viewer", spin_ms=5000,
                "amount": "3", "asset_url": ""}
     return gift_roulette.prepare_spin(
         cfg, gifts, {}, {}, catalog, trigger,
-        source="live", profile="default", now=now, rng=rng or _FixedPick(),
+        source=source, profile="default", now=now, rng=rng or _FixedPick(),
     )
 
 
@@ -387,28 +387,119 @@ class RouletteRuntimeTest(unittest.TestCase):
         self.assertEqual(on_disk["spin_id"], p.spin_id)
         self.assertNotIn("winner_actions", on_disk)  # never persisted
 
-    def test_second_reservation_while_spinning_is_busy(self):
+    def test_second_reservation_while_spinning_queues_fifo(self):
         self.runtime.try_reserve(_prepared(), cooldown_ms=2000)
-        accepted, reason = self.runtime.try_reserve(_prepared(), cooldown_ms=2000)
-        self.assertFalse(accepted)
-        self.assertEqual(reason, "busy")
+        accepted, reason = self.runtime.try_reserve(
+            _prepared(now=self.clock.t, user="SecondViewer"), cooldown_ms=2000)
+        self.assertTrue(accepted)
+        self.assertEqual(reason, "queued")
+        self.assertEqual(self.runtime.queue_depth(), 1)
 
-    def test_cooldown_rejects_until_elapsed(self):
+    def test_cooldown_queues_then_starts_after_elapsed(self):
         p1 = _prepared()
         self.runtime.try_reserve(p1, cooldown_ms=2000)
         # fast-forward: spin done + landed
         self.clock.advance(5.0)
         self.runtime._write_land_state()
-        # still inside 2s cooldown after land; different viewer so the
-        # duplicate-final guard does not fire first
+        # A later viewer is queued. The wait is the REVEAL window (hide_at =
+        # land + hold_ms), not just the 2 s command cooldown: the next spin must
+        # not start while the winner is still on screen.
         accepted, reason = self.runtime.try_reserve(
             _prepared(now=self.clock.t, user="OtherViewer"), cooldown_ms=2000)
-        self.assertFalse(accepted)
-        self.assertEqual(reason, "cooldown")
-        self.clock.advance(2.1)
+        self.assertTrue(accepted)
+        self.assertEqual(reason, "queued")
+        self.assertIsNone(self.runtime.take_next())  # reveal still on screen
+        self.clock.advance(4.1)                      # past hide_at (land + 4 s)
+        nxt = self.runtime.take_next()
+        self.assertIsNotNone(nxt)
+        self.assertEqual(nxt.winner_context["user"], "OtherViewer")
+        self.assertEqual(self.runtime.queue_depth(), 0)
+
+    def test_next_spin_waits_for_the_reveal_not_just_command_cooldown(self):
+        """Overlap regression.
+
+        The winner bundle dispatches at lands_at but the overlay keeps the
+        winner revealed until hide_at (hold_ms). With the default 2 s cooldown
+        and 4 s hold the next spin used to begin mid-reveal, so its ticking
+        overlapped the winner chime.
+        """
+        p1 = _prepared(spin_ms=5000, hold_ms=4000)
+        self.runtime.try_reserve(p1, cooldown_ms=2000)
+        self.clock.advance(5.0)                 # spin finished, landed
+        self.runtime._write_land_state()
+        # cooldown_ms alone would leave only 2 s; the reveal needs the full 4 s.
+        self.assertGreaterEqual(
+            self.runtime.cooldown_delay(), 4.0,
+            "cooldown must cover the reveal window, not just the command cooldown")
+
+    def test_test_spins_are_exempt_from_duplicate_final(self):
+        """A second deliberate Test Spin must never count as a duplicate summary.
+
+        The guard keys on (trigger gift, viewer) to dedupe TikTok's re-sent
+        streak summaries. Test Spin always reuses the same configured trigger
+        gift and the same default viewer, so a second click was rejected with
+        duplicate_final for 30 s.
+        """
+        self.runtime.try_reserve(_prepared(source="test"), cooldown_ms=2000)
+        self.clock.advance(5.0)
+        self.runtime._write_land_state()          # records _last_completed
         accepted, reason = self.runtime.try_reserve(
-            _prepared(now=self.clock.t, user="OtherViewer"), cooldown_ms=2000)
+            _prepared(now=self.clock.t, source="test"), cooldown_ms=2000)
         self.assertTrue(accepted, reason)
+        self.assertNotEqual(reason, "duplicate_final")
+
+    def test_live_duplicate_summary_is_still_rejected(self):
+        """The live guard must survive the test-spin exemption."""
+        self.runtime.try_reserve(_prepared(), cooldown_ms=2000)
+        self.clock.advance(5.0)
+        self.runtime._write_land_state()
+        accepted, reason = self.runtime.try_reserve(
+            _prepared(now=self.clock.t), cooldown_ms=2000)   # same gift + viewer
+        self.assertFalse(accepted)
+        self.assertEqual(reason, "duplicate_final")
+
+    def test_drain_runs_a_spin_queued_during_the_reveal(self):
+        """No chain active: a spin queued during the reveal must still run.
+
+        A trigger can arrive while the previous spin's reveal is still on screen
+        and its drain chain has already exited. The queued spin must not strand.
+        """
+        p1 = _prepared()
+        self.runtime.try_reserve(p1, cooldown_ms=2000)
+        self.runtime.mark_reserved_started()
+        self.clock.advance(5.0)
+        self.runtime._write_land_state()                    # landed, revealing
+        self.runtime._write_dispatch_status("dispatched")   # slot freed
+
+        accepted, reason = self.runtime.try_reserve(
+            _prepared(now=self.clock.t, user="SecondViewer"), cooldown_ms=2000)
+        self.assertTrue(accepted)
+        self.assertEqual(reason, "queued")
+        self.assertIsNone(self.runtime.take_next())   # reveal still on screen
+
+        ran = []
+
+        async def bundle(actions, context):
+            ran.append(context["user"])
+
+        async def fake_sleep(seconds):
+            self.clock.advance(seconds)
+
+        async def drain():
+            while True:
+                nxt = self.runtime.take_next()
+                if nxt is None:
+                    delay = self.runtime.cooldown_delay()
+                    if delay > 0 and self.runtime.queue_depth() > 0:
+                        await fake_sleep(delay)
+                        continue
+                    return
+                self.runtime.mark_reserved_started()
+                await self.runtime.run_reserved(nxt, bundle, sleep=fake_sleep)
+
+        asyncio.run(drain())
+        self.assertEqual(ran, ["SecondViewer"])
+        self.assertEqual(self.runtime.queue_depth(), 0)
 
     def test_landing_sets_state_and_dispatch(self):
         p = _prepared()

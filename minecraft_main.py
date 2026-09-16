@@ -639,6 +639,16 @@ async def send_minecraft_command(command):
     shared thread-pool queue and does not hold the TikTok event handler open while
     RCON connects, executes, or waits for the server response.
     """
+    send_minecraft_command_sync(command)
+
+
+def send_minecraft_command_sync(command):
+    """Sync twin of send_minecraft_command for non-async callers.
+
+    Same fire-and-forget thread dispatch — used by modules with no event loop
+    (e.g. spotify_handler's optional Minecraft chat mirror). Keeping one
+    implementation means the async and sync paths can never drift.
+    """
     _threading.Thread(
         target=__send_sync_command,
         args=(command,),
@@ -1075,11 +1085,56 @@ def _log_roulette_task_done(task) -> None:
         pass
 
 
+async def _roulette_bundle(actions, context):
+    """Winner-bundle sender: the Log Only-gated wrapper + live connector."""
+    await execute_actions(actions, context, send_minecraft_command)
+
+
+async def _run_spin_then_drain(prepared) -> None:
+    """Run one active spin, then drain any spins queued behind it.
+
+    The finally guarantees queued senders still get their spin even when
+    this spin's winner bundle raises.
+    """
+    try:
+        await ROULETTE_RUNTIME.run_reserved(prepared, _roulette_bundle)
+    finally:
+        await _drain_roulette_queue()
+
+
+async def _drain_roulette_queue() -> None:
+    """Run queued spins FIFO until the queue is empty.
+
+    Single-pump: concurrent drains serialize on claim_pump so two chains
+    never start the same queued spin twice. Cooldown is honored between
+    spins; each spin keeps its own sender name, winner, and overlay turn.
+    """
+    if not ROULETTE_RUNTIME.claim_pump():
+        return
+    try:
+        while True:
+            nxt = ROULETTE_RUNTIME.take_next()
+            if nxt is None:
+                delay = ROULETTE_RUNTIME.cooldown_delay()
+                if delay > 0 and ROULETTE_RUNTIME.queue_depth() > 0:
+                    await asyncio.sleep(delay)
+                    continue
+                return
+            ROULETTE_RUNTIME.mark_reserved_started()
+            qnick = str((nxt.winner_context or {}).get("user", "") or "?")
+            print(f"[ROULETTE] Spin started ({nxt.spin_id}) — queued trigger: {qnick}")
+            await ROULETTE_RUNTIME.run_reserved(nxt, _roulette_bundle)
+    finally:
+        ROULETTE_RUNTIME.release_pump()
+
+
 async def _try_start_roulette_spin(ctx, source="live"):
-    """Start a Gift Roulette spin if config/pool/cooldown allow.
+    """Start a Gift Roulette spin now or enqueue it FIFO behind the active one.
 
     Wired as the `roulette` action type via execute_actions. Returns True when
-    a spin was reserved and scheduled.
+    a spin was reserved — immediately ("ok") or queued ("queued"); a queued
+    spin runs after the active spin's winner bundle finishes dispatching.
+    Only duplicate_final / queue_full / invalid-pool rejections return False.
     """
     if _should_skip_action_execution():
         return False
@@ -1104,17 +1159,23 @@ async def _try_start_roulette_spin(ctx, source="live"):
             prepared, int(ROULETTE_CONFIG.get("cooldown_ms", 2000))
         )
         if accepted:
+            nick = str(ctx.get("user", "") or "?")
+            if rl_reason == "queued":
+                depth = ROULETTE_RUNTIME.queue_depth()
+                print(f"[ROULETTE] Spin queued ({prepared.spin_id}) — trigger: {nick} (#{depth} in queue)")
+                # Guarantee a pump exists. The previous spin's drain may already
+                # have exited (its queue was empty at the time) while the reveal
+                # window still blocks a new spin, so without this the queued
+                # spin would never run. claim_pump() makes it a no-op when a
+                # chain is already draining.
+                drain_task = asyncio.create_task(_drain_roulette_queue())
+                drain_task.add_done_callback(_log_roulette_task_done)
+                return True
             ROULETTE_RUNTIME.mark_reserved_started()
             spin_task = asyncio.create_task(
-                ROULETTE_RUNTIME.run_reserved(
-                    prepared,
-                    lambda actions, context: execute_actions(
-                        actions, context, send_minecraft_command
-                    ),
-                )
+                _run_spin_then_drain(prepared),
             )
             spin_task.add_done_callback(_log_roulette_task_done)
-            nick = str(ctx.get("user", "") or "?")
             print(f"[ROULETTE] Spin started ({prepared.spin_id}) — trigger: {nick}")
             return True
         print(f"[ROULETTE] Trigger rejected ({rl_reason})")

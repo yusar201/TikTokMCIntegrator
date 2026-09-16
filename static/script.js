@@ -1904,7 +1904,7 @@ function selectAddEvent(eventKey, evt) {
 
   document.getElementById('add-event-selected-name').textContent = evt.name;
   document.getElementById('add-event-selected-desc').textContent = evt.description;
-  document.getElementById('add-event-selected-vars').innerHTML = `Variables: ${evt.template_vars.map(v => `<code>{${v}}</code>`).join(' ')}`;
+  document.getElementById('add-event-selected-vars').innerHTML = `Variables: ${varChips(evt.template_vars)}`;
 
   // Show Like-specific config
   const likeConfig = document.getElementById('add-event-like-config');
@@ -1993,7 +1993,7 @@ function openEditEventModal(eventKey) {
   }
   document.getElementById('edit-event-name').textContent = editDisplayName;
   document.getElementById('edit-event-desc').textContent = reg.description || '';
-  document.getElementById('edit-event-vars').innerHTML = `Variables: ${(reg.template_vars || []).map(v => `<code>{${v}}</code>`).join(' ')}`;
+  document.getElementById('edit-event-vars').innerHTML = `Variables: ${varChips(reg.template_vars || [])}`;
 
   const value = (currentConfig.Events || {})[eventKey];
   let actions = [];
@@ -2636,6 +2636,59 @@ function escHtml(str) {
 // Alias for song section and other callers that use 'esc'
 const esc = escHtml;
 
+// ── Hoverable template-variable chips ──────────────────────────────
+// One shared explanation map; every "Variables:" hint renders chips from it.
+const VAR_EXPLANATIONS = {
+  user: 'TikTok username of the sender.',
+  mc: 'Your configured Minecraft username.',
+  amount: 'Gift count this execution uses — the streak total once the streak ends.',
+  repeat_count: 'Running streak total so far.',
+  gift_name: 'Display name of the gift.',
+  gift_id: 'TikTok numeric ID of the gift.',
+  total_coin: 'Coins for this fire: repeat_count x diamond_count.',
+  diamond_count: 'Coin price of ONE gift.',
+  total_likes: 'Total likes on the stream.',
+  comment: 'The chat message text.',
+  tag: 'Event tag, when present.',
+};
+function varChip(v) {
+  const tip = VAR_EXPLANATIONS[v] || ('Value of ' + v + '.');
+  return `<span class="var-chip" data-var-tip="${escHtml(tip)}">{${escHtml(v)}}</span>`;
+}
+function varChips(vars) {
+  return (vars || []).map(varChip).join(' ');
+}
+function positionVarTip(el) {
+  const tip = document.getElementById('var-tip');
+  if (!tip) return;
+  const r = el.getBoundingClientRect();
+  const w = 260;
+  let left = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+  let top = r.bottom + 6;
+  if (top + 80 > window.innerHeight) top = Math.max(8, r.top - 90);
+  tip.style.left = left + 'px';
+  tip.style.top = top + 'px';
+  tip.style.maxWidth = w + 'px';
+}
+document.addEventListener('mouseover', (e) => {
+  const chip = e.target.closest ? e.target.closest('.var-chip') : null;
+  let tip = document.getElementById('var-tip');
+  if (!chip) { if (tip) tip.remove(); return; }
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'var-tip';
+    document.body.appendChild(tip);
+  }
+  tip.textContent = chip.getAttribute('data-var-tip') || '';
+  positionVarTip(chip);
+});
+document.addEventListener('mouseout', (e) => {
+  const chip = e.target.closest ? e.target.closest('.var-chip') : null;
+  if (!chip) return;
+  const tip = document.getElementById('var-tip');
+  if (tip && !chip.contains(e.relatedTarget)) tip.remove();
+});
+
 function closeGiftModal() {
   document.getElementById('gift-modal').classList.remove('active');
   document.getElementById('gift-icon-group').style.display = 'none';
@@ -3243,8 +3296,17 @@ function setupThemeToggle() {
 // ==========================================
 // INITIALIZATION
 // ==========================================
+// Static "Variables:" hints (gift modal + global gift actions) render once.
+const GIFT_VAR_LIST = ['user', 'mc', 'amount', 'repeat_count', 'gift_name', 'gift_id', 'total_coin', 'diamond_count'];
+function renderStaticVarHints() {
+  const giftModalVars = document.getElementById('gift-modal-vars');
+  if (giftModalVars) giftModalVars.innerHTML = 'Each action runs in order. Variables:<br>' + varChips(GIFT_VAR_LIST);
+  const globalVars = document.getElementById('global-gift-vars');
+  if (globalVars) globalVars.innerHTML = 'These actions run on EVERY gift received. Variables:<br>' + varChips(GIFT_VAR_LIST);
+}
 document.addEventListener('DOMContentLoaded', () => {
   setupThemeToggle();
+  renderStaticVarHints();
   loadProfiles();
   loadConfig();
   checkBotStatus();
@@ -4394,6 +4456,9 @@ async function loadSongConfig() {
     document.getElementById('song-revoke-cmd').value = data.revoke_command || '!revoke';
     document.getElementById('song-enabled').checked = data.enabled !== false;
     document.getElementById('song-allow-explicit').checked = data.allow_explicit !== false;
+    // Minecraft chat mirror (off by default)
+    const mcFb = data.mc_feedback || {};
+    document.getElementById('song-mc-feedback').checked = mcFb.enabled === true;
     document.getElementById('song-max-total').value = data.max_queue_total || 10;
     document.getElementById('song-max-user').value = data.max_queue_per_user || 2;
 
@@ -4457,7 +4522,12 @@ async function saveSongConfig() {
         mods: document.getElementById('skip-perm-mods').checked,
         vip: document.getElementById('skip-perm-vip').checked,
         whitelist: skipWhitelist
-      }
+      },
+      // Preserve existing mc_feedback sub-toggles (notify_success/errors/denied),
+      // only flipping the master switch — the backend replaces whole keys.
+      mc_feedback: Object.assign({}, songConfig && songConfig.mc_feedback, {
+        enabled: document.getElementById('song-mc-feedback').checked
+      })
     };
 
     const res = await fetch('/api/spotify/config', {
@@ -5451,20 +5521,39 @@ async function testRouletteSpin() {
       body: JSON.stringify({ user: 'TestViewer' }),
     });
     const body = await res.json();
+    const now = Date.now() / 1000;
+    const spinMs = Number(body.spin_ms) || 5000;
+    const holdMs = Number(body.hold_ms) || 4000;
+
     if (status) {
-      status.textContent = res.ok
-        ? `Test spin accepted — winner will be "${body.winner}" (lands in ~${Math.max(0, Math.round((body.lands_at - Date.now()/1000)))}s). Watch /overlay/roulette.`
-        : (body.message || 'Test spin failed');
+      if (!res.ok) {
+        status.textContent = body.message || 'Test spin failed';
+      } else if (body.queued) {
+        status.textContent = `Test spin queued (#${body.queue_depth}) — winner will be "${body.winner}" after the current spin.`;
+      } else {
+        status.textContent = `Test spin accepted — winner will be "${body.winner}" (lands in ~${Math.max(0, Math.round((body.lands_at || now) - now))}s). Watch /overlay/roulette.`;
+      }
     }
     if (!res.ok) showToast(body.message || 'Test spin failed', 'error');
     else {
-      showToast('Test spin started: ' + body.winner, 'success');
       // Mirror the spin audio in the dashboard: the overlay iframe's context
       // stays suspended (no gesture inside the frame), but the Test Spin click
-      // unlocked THIS context — so time the roll to the real land delay.
-      playRouletteTestSpinAudio(
-        Math.max(0, Math.round(((body.lands_at || 0) - Date.now() / 1000) * 1000))
-      );
+      // unlocked THIS context.
+      // A QUEUED spin must NOT play on top of the spin still on screen: space
+      // its roll after the current spin's roll + reveal window. The server
+      // starts the next spin right after the previous hide_at, so that is the
+      // right moment to start this one's audio too.
+      if (body.queued) {
+        const startAt = Math.max(now, rouletteMirrorFreeAt);
+        rouletteMirrorFreeAt = startAt + (spinMs + holdMs) / 1000;
+        scheduleRouletteTestSpinAudio((startAt - now) * 1000, spinMs);
+        showToast(`Test spin queued (#${body.queue_depth})`, 'success');
+      } else {
+        const landsAt = Number(body.lands_at) || (now + spinMs / 1000);
+        rouletteMirrorFreeAt = Number(body.hide_at) || (landsAt + holdMs / 1000);
+        scheduleRouletteTestSpinAudio(0, Math.max(0, (landsAt - now) * 1000));
+        showToast('Test spin started: ' + body.winner, 'success');
+      }
     }
   } catch (e) {
     showToast('Test spin failed', 'error');
@@ -5536,16 +5625,31 @@ function playRouletteSoundPreview() {
 // ── Test-spin audio mirror ──
 // The overlay iframe never receives a click, so its AudioContext stays
 // suspended in a browser tab (OBS allows autoplay — stream audio is fine).
-// Mirror the spin audio here in the dashboard, timed to the real land delay:
-// the click on Test Spin IS the gesture that unlocked THIS context.
-function playRouletteTestSpinAudio(landDelayMs) {
+// Mirror the spin audio here in the dashboard: the click on Test Spin IS the
+// gesture that unlocked THIS context.
+// ONE shared context: browsers cap how many AudioContexts a page may hold, and
+// a fresh context per click leaked one per Test Spin.
+let rouletteMirrorCtx = null;
+let rouletteMirrorFreeAt = 0;   // epoch seconds when the mirrored audio frees up
+
+function rouletteMirrorContext() {
   const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) return;
-  const totalMs = Math.max(600, landDelayMs);
-  const ctx = new AC();
+  if (!AC) return null;
+  if (!rouletteMirrorCtx) rouletteMirrorCtx = new AC();
+  if (rouletteMirrorCtx.state === 'suspended') rouletteMirrorCtx.resume();
+  return rouletteMirrorCtx;
+}
+
+// Schedule a spin's roll + land chime.
+//   startDelayMs — how long until this roll begins (0 = immediately)
+//   rollMs       — how long the roll lasts before the land chime
+// A queued spin is scheduled into the future instead of played on click, so it
+// never overlaps the spin still on screen.
+function scheduleRouletteTestSpinAudio(startDelayMs, rollMs) {
+  const ctx = rouletteMirrorContext();
+  if (!ctx) return;
   const play = () => {
-    const endOffset = rouletteRollSynth(ctx, ctx.currentTime, totalMs);
-    setTimeout(() => ctx.close(), endOffset * 1000);
+    rouletteRollSynth(ctx, ctx.currentTime + Math.max(0, startDelayMs) / 1000, rollMs);
   };
   if (ctx.state === 'suspended') ctx.resume().then(play); else play();
 }

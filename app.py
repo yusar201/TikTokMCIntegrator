@@ -526,6 +526,51 @@ def update_roulette_config():
     return resp
 
 
+# The dashboard test-spin runtime MUST be a process-level singleton. Building a
+# fresh RouletteRuntime per HTTP request gave each request its own empty queue,
+# so a second/third rapid Test Spin was enqueued into a queue that was thrown
+# away when the request ended — the spin silently vanished. One runtime per
+# dashboard process keeps the FIFO alive across requests.
+_DASHBOARD_ROULETTE_RUNTIME = None
+_DASHBOARD_ROULETTE_LOCK = threading.Lock()
+
+
+def _dashboard_roulette_runtime():
+    """Return the dashboard's shared RouletteRuntime, creating it once."""
+    global _DASHBOARD_ROULETTE_RUNTIME
+    with _DASHBOARD_ROULETTE_LOCK:
+        if _DASHBOARD_ROULETTE_RUNTIME is None:
+            runtime = gift_roulette.RouletteRuntime(_ROULETTE_STATE_PATH)
+            runtime.sweep_stale()
+            _DASHBOARD_ROULETTE_RUNTIME = runtime
+        return _DASHBOARD_ROULETTE_RUNTIME
+
+
+# Rejection reasons are not interchangeable: "wait for the cooldown" is wrong
+# advice for a duplicate summary or a full queue, and it sent the operator
+# hunting for a cooldown that was not the problem.
+_ROULETTE_REJECT_MESSAGES = {
+    "duplicate_final": (
+        "This gift + viewer already spun in the last 30 seconds — TikTok "
+        "re-sent the same completion, so it was not spun again."
+    ),
+    "queue_full": (
+        "The spin queue is full. Wait for the queued spins to finish, then try again."
+    ),
+    "invalid_pool": (
+        "The roulette pool has no valid gift. Fix the pool in the Roulette tab."
+    ),
+}
+
+
+def _roulette_reject_message(reason: str) -> str:
+    """Operator-facing explanation for a rejected spin."""
+    return _ROULETTE_REJECT_MESSAGES.get(
+        reason,
+        f"Spin rejected: {reason}. Wait for the current spin to finish.",
+    )
+
+
 @app.route("/api/roulette/test", methods=["POST"])
 def test_roulette_spin():
     """Executable test spin — dashboard process ONLY while the bot is stopped.
@@ -579,17 +624,20 @@ def test_roulette_spin():
     except gift_roulette.RouletteValidationError as exc:
         return jsonify({"status": "error", "message": str(exc)}), 400
 
-    runtime = gift_roulette.RouletteRuntime(_ROULETTE_STATE_PATH)
-    runtime.sweep_stale()
+    runtime = _dashboard_roulette_runtime()
     accepted, reason = runtime.try_reserve(
         prepared, int(normalized.get("cooldown_ms", 2000))
     )
     if not accepted:
         return jsonify({
             "status": "error",
-            "message": f"Spin rejected: {reason}. Wait for the current/cooldown spin to finish.",
+            "reason": reason,
+            "message": _roulette_reject_message(reason),
         }), 409
-    runtime.mark_reserved_started()
+
+    queued = reason == "queued"
+    if not queued:
+        runtime.mark_reserved_started()
 
     # Submit the landing to the shared background loop; do NOT block this HTTP
     # request for the full spin duration (mirror of the TTS loop pattern).
@@ -603,16 +651,56 @@ def test_roulette_spin():
             from actions import execute_actions as _exec
             await _exec(actions, context, sender)
 
-        await runtime.run_reserved(prepared, bundle)
+        async def drain():
+            """Run spins queued behind the active one, FIFO.
+
+            A second/third rapid Test Spin must still fire. Without this chain
+            the queued spin sat in the FIFO forever, because nothing drains the
+            dashboard's queue.
+            """
+            if not runtime.claim_pump():
+                return
+            try:
+                while True:
+                    nxt = runtime.take_next()
+                    if nxt is None:
+                        delay = runtime.cooldown_delay()
+                        if delay > 0 and runtime.queue_depth() > 0:
+                            await _asyncio.sleep(delay)
+                            continue
+                        return
+                    runtime.mark_reserved_started()
+                    await runtime.run_reserved(nxt, bundle)
+            finally:
+                runtime.release_pump()
+
+        if queued:
+            # Already appended to the FIFO by try_reserve — do NOT run it here.
+            # Pump only in case no chain is live (e.g. the previous spin already
+            # finished and only cooldown was pending).
+            await drain()
+            return
+        try:
+            await runtime.run_reserved(prepared, bundle)
+        finally:
+            await drain()
 
     _submit_async(_run_test_spin())
 
     resp = jsonify({
         "status": "accepted",
+        "queued": queued,
+        "queue_depth": runtime.queue_depth(),
         "spin_id": prepared.spin_id,
         "winner": prepared.winner_label,
-        "lands_at": prepared.public_state["lands_at"],
-        "hide_at": prepared.public_state["hide_at"],
+        # Roll/hold durations so the dashboard's audio mirror can space queued
+        # spins correctly (it needs the same spin_ms/hold_ms the server uses).
+        "spin_ms": normalized.get("spin_ms"),
+        "hold_ms": normalized.get("hold_ms"),
+        # A queued spin has no honest landing time yet: it is stamped when the
+        # drain chain activates it. Report null instead of a stale estimate.
+        "lands_at": None if queued else prepared.public_state["lands_at"],
+        "hide_at": None if queued else prepared.public_state["hide_at"],
     })
     resp.headers["Cache-Control"] = "no-store"
     return resp, 202

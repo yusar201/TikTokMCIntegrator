@@ -25,12 +25,17 @@ import secrets
 import threading
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 
 STATE_SCHEMA = 1
 MAX_POOL_ENTRIES = 100
 MAX_REEL_ROWS = 25
 DUPLICATE_FINAL_TTL_SECONDS = 30.0
+# FIFO cap: at ~11s per spin, 50 queued spins ≈ 9 min backlog. A full queue
+# rejects with "queue_full" (the gift's own actions still run); the queue
+# itself never drops an accepted spin.
+MAX_QUEUE = 50
 
 DEFAULT_ROULETTE_CONFIG = {
     "enabled": False,
@@ -374,9 +379,11 @@ def prepare_spin(config_snapshot: dict, gifts_snapshot: dict,
 
 
 class RouletteRuntime:
-    """Single active spin per process with cooldown and atomic state file.
+    """One active spin per process plus a bounded FIFO for the rest.
 
-    Not a queue: rejected triggers fall back to their normal gift actions.
+    Every accepted trigger spins — nothing is silently dropped. A spin runs
+    only after the previous spin's winner bundle finished dispatching, so
+    each sender's spin keeps its own sender name, winner, and overlay turn.
     Stale state from a prior process never executes actions — a startup sweep
     marks it cancelled before the engine accepts new spins.
     """
@@ -390,6 +397,11 @@ class RouletteRuntime:
         self._cooldown_until: float = 0.0    # monotonic wall-clock seconds
         self._last_completed: tuple | None = None  # duplicate-final dedupe
         self._last_completed_at: float = 0.0
+        # FIFO of (PreparedSpin, cooldown_ms): prepared spins are immutable
+        # (actions + winner context deep-copied at spin start), so queued
+        # entries can never be mutated by later config/profile edits.
+        self._queue: deque = deque()
+        self._pump_running: bool = False  # single queue-pump role
 
     # -- persistence helpers (off-loop callers use asyncio.to_thread) --------
 
@@ -438,36 +450,103 @@ class RouletteRuntime:
             self._state = None
             return False
 
-    def try_reserve(self, prepared: PreparedSpin, cooldown_ms: int) -> tuple:
-        """Atomically accept or reject a spin reservation. No queue.
+    def _activate(self, prepared: PreparedSpin, cooldown_ms: int, now: float) -> None:
+        """Set the in-memory active spin from a prepared spin. Caller holds the lock."""
+        state = dict(prepared.public_state)
+        state["started_at"] = now
+        state["lands_at"] = now + (int(prepared.config_snapshot.get("spin_ms", 5000)) / 1000.0)
+        state["hide_at"] = state["lands_at"] + (
+            int(prepared.config_snapshot.get("hold_ms", 4000)) / 1000.0)
+        self._state = state
+        self._active_cooldown_ms = int(cooldown_ms)
+        # run_reserved sleeps on prepared.public_state["lands_at"] — refresh it
+        # too, or a long-waiting queued spin lands instantly with no animation.
+        prepared.public_state["started_at"] = now
+        prepared.public_state["lands_at"] = state["lands_at"]
+        prepared.public_state["hide_at"] = state["hide_at"]
 
-        Returns (accepted: bool, reason: str). Reasons: ok, busy, cooldown,
-        duplicate_final. On accept the in-memory state is set BEFORE returning
-        so a second caller can never win the same slot.
+    def try_reserve(self, prepared: PreparedSpin, cooldown_ms: int) -> tuple:
+        """Accept a spin now or enqueue it for the next free slot.
+
+        Returns (accepted: bool, reason: str). Reasons: ok (spins now),
+        queued (waits its FIFO turn), duplicate_final (re-sent summary —
+        never enqueued; live triggers only), queue_full (FIFO is full; the
+        caller falls back to the trigger's normal gift actions). An accepted
+        spin always executes; only a full queue falls back.
+        """
+        now = self._clock()
+        with self._lock:
+            # Duplicate final-summary guard: a re-sent completion must never
+            # spin twice — not now, not queued. Live-only: the guard keys on
+            # (trigger gift, viewer), which is exactly right for deduping
+            # TikTok's re-sent streak summaries, but a manual Test Spin reuses
+            # the same configured trigger gift and the same default viewer name,
+            # so a second deliberate click collided with the first and every
+            # Test Spin after the initial one was rejected for 30 s.
+            if prepared.source != "test":
+                trigger_ctx = prepared.public_state.get("trigger") or {}
+                key = (trigger_ctx.get("gift_id", ""), trigger_ctx.get("user", ""))
+                if self._last_completed and self._last_completed == key:
+                    age = now - self._last_completed_at
+                    if age < DUPLICATE_FINAL_TTL_SECONDS:
+                        return (False, "duplicate_final")
+
+            if self._state is not None and self._state.get("status") == "spinning":
+                return self._enqueue_locked(prepared, cooldown_ms)
+            if now < self._cooldown_until:
+                return self._enqueue_locked(prepared, cooldown_ms)
+
+            self._activate(prepared, cooldown_ms, now)
+            return (True, "ok")
+
+    def _enqueue_locked(self, prepared: PreparedSpin, cooldown_ms: int) -> tuple:
+        """Append a prepared spin to the FIFO. Caller holds the lock."""
+        if len(self._queue) >= MAX_QUEUE:
+            return (False, "queue_full")
+        self._queue.append((prepared, int(cooldown_ms)))
+        return (True, "queued")
+
+    def queue_depth(self) -> int:
+        """Number of spins waiting for their turn (active spin excluded)."""
+        with self._lock:
+            return len(self._queue)
+
+    def cooldown_delay(self) -> float:
+        """Seconds until the next spin may start (0 when ready)."""
+        with self._lock:
+            return max(0.0, self._cooldown_until - self._clock())
+
+    def take_next(self) -> PreparedSpin | None:
+        """Pop the head of the FIFO and make it the active spin.
+
+        Returns None while a spin is active, while cooldown is pending, or
+        when the queue is empty. Refreshes the spin's display timestamps so
+        a long-waiting spin still animates a full spin_ms on the overlay.
         """
         now = self._clock()
         with self._lock:
             if self._state is not None and self._state.get("status") == "spinning":
-                return (False, "busy")
+                return None
             if now < self._cooldown_until:
-                return (False, "cooldown")
+                return None
+            if not self._queue:
+                return None
+            prepared, cooldown_ms = self._queue.popleft()
+            self._activate(prepared, cooldown_ms, now)
+            return prepared
 
-            # Duplicate final-summary guard (plan §4.3)
-            trigger_ctx = prepared.public_state.get("trigger") or {}
-            key = (trigger_ctx.get("gift_id", ""), trigger_ctx.get("user", ""))
-            if self._last_completed and self._last_completed == key:
-                age = now - self._last_completed_at
-                if age < DUPLICATE_FINAL_TTL_SECONDS:
-                    return (False, "duplicate_final")
+    def claim_pump(self) -> bool:
+        """Claim the single queue-pump role. Only one chain pumps at a time."""
+        with self._lock:
+            if self._pump_running:
+                return False
+            self._pump_running = True
+            return True
 
-            state = dict(prepared.public_state)
-            state["started_at"] = now
-            state["lands_at"] = now + (int(prepared.config_snapshot.get("spin_ms", 5000)) / 1000.0)
-            state["hide_at"] = state["lands_at"] + (
-                int(prepared.config_snapshot.get("hold_ms", 4000)) / 1000.0)
-            self._state = state
-            self._active_cooldown_ms = int(cooldown_ms)
-            return (True, "ok")
+    def release_pump(self) -> None:
+        """Release the queue-pump role when a chain ends or is cancelled."""
+        with self._lock:
+            self._pump_running = False
 
     def mark_reserved_started(self) -> None:
         """Persist the freshly reserved state. Called (off-loop) after reserve."""
@@ -502,7 +581,16 @@ class RouletteRuntime:
             if self._state is None or self._state.get("status") != "spinning":
                 return
             self._state["status"] = "landed"
-            self._cooldown_until = now + (self._active_cooldown_ms / 1000.0)
+            # The slot must stay busy through the winner's REVEAL window, not
+            # just the command cooldown. The winner bundle dispatches at
+            # lands_at, but the overlay keeps showing the winner until hide_at
+            # (hold_ms). With the default 2 s cooldown vs 4 s hold, the next
+            # spin used to start while the reveal was still on screen, so its
+            # ticking overlapped the winner chime.
+            hide_at = float(self._state.get("hide_at") or 0.0)
+            self._cooldown_until = max(
+                now + (self._active_cooldown_ms / 1000.0), hide_at
+            )
             self._last_completed = (
                 (self._state.get("trigger") or {}).get("gift_id", ""),
                 (self._state.get("trigger") or {}).get("user", ""),
