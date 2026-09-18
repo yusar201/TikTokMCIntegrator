@@ -14,8 +14,8 @@ Format:
 - Pending: <what remains / what the other agent should know>
 ```
 
-## 2026-09-18 07:47 — Sep-17 work committed (push pending): song default/block list, independent roulette prizes, connection diagnostics (by Hermes)
-- Branch/commit: main, 868a63e (this docs entry is the commit after it). Local commits `463f0ab` + `868a63e` are ready; `git push origin main` is still PENDING Khito's approval — a push attempt this pass was stopped at the tool approval gate, so `origin/main` does NOT yet contain either commit.
+## 2026-09-18 07:57 — Sep-17 work committed + pushed: song default/block list, independent roulette prizes, connection diagnostics (by Hermes)
+- Branch/commit: main, pushed to `origin/main` at `29c22f6` (`b8c74ee..29c22f6`) on Khito's instruction. `463f0ab` + `868a63e` + this docs entry are all on GitHub; verified via the API (`commits/main` = `29c22f6`, and `contents?ref=main` returns 200 for the new `net_prefs.py`).
 - Files: app.py, avatar_cache.py, gift_catalog_sync.py, gift_roulette.py, minecraft_main.py, net_prefs.py (new), roulette_prizes.py (new), routes/spotify.py, spotify_handler.py, static/roulette_prizes.js (new), static/script.js, static/style.css, templates/index.html, + 14 new test files. 27 files, 4466+/167-.
 - Tests: full suite on Windows Python 3.13 (`/mnt/c/Python313/python.exe -m pytest -q`) → **1472 passed** in 140s (2026-09-18 07:44 WIB) on the exact committed tree, including the new untracked modules. Ports 5000/5001 free afterwards, no stray processes.
 - Deployed: no rebuild this pass. The committed code was already built+deployed Sep-17; Sep-18 was read-only artifact/parity checking only. Nothing in this pass touched `release/`.
