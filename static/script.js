@@ -3333,10 +3333,13 @@ document.addEventListener('DOMContentLoaded', () => {
   scheduleLightPoll(checkBotStatus, 3000);
   scheduleLightPoll(fetchLogs, 1500);
   scheduleLightPoll(fetchViewerStats, 3000);
-  scheduleLightPoll(fetchGiftLog, 2500);
+  // Chat + gifts sit on the command-critical path (a gift is what fires the
+  // Minecraft action), so they poll faster than the rest. Together with the
+  // bot's 1s flush this puts the worst-case delay at ~2.5s instead of ~4.5s.
+  scheduleLightPoll(fetchGiftLog, 1500);
   scheduleLightPoll(fetchFollowLog, 3000);
   scheduleLightPoll(fetchSuperfanLog, 2500);
-  scheduleLightPoll(fetchChatLog, 2500);
+  scheduleLightPoll(fetchChatLog, 1500);
   scheduleLightPoll(fetchSimConsole, 2000);
   // Active streaks do not need sub-second hidden-dashboard polling.
   scheduleLightPoll(fetchActiveStreaks, 1000);
@@ -4445,12 +4448,199 @@ async function disconnectSpotify() {
   }
 }
 
+let songBlocklist = [];
+let songBlocklistLoaded = false;
+let songBlockRevision = 0;
+let songSearchResults = [];
+let songBlockBusy = false;
+
+function songIsBlocked(track) {
+  return songBlocklistLoaded ? songBlocklist.some(t => t.uri === track?.uri) : !!track?.blocked;
+}
+
+function renderSongBlocklist() {
+  const container = document.getElementById('song-blocklist-container');
+  if (!container) return;
+  document.getElementById('song-blocklist-count').textContent = `${songBlocklist.length} songs`;
+  container.replaceChildren();
+  if (!songBlocklist.length) {
+    container.innerHTML = '<div class="song-empty small song-blocklist-empty"><strong>No blocked songs</strong><span>Use the block button in Search to add one.</span></div>';
+  }
+  songBlocklist.forEach(track => {
+    const row = document.createElement('div');
+    row.className = 'song-row song-blocked-row';
+    const info = document.createElement('div');
+    info.className = 'song-block-info';
+    const title = document.createElement('div');
+    title.className = 'song-row-title';
+    title.textContent = track.name;
+    const artist = document.createElement('div');
+    artist.className = 'song-row-sub';
+    artist.textContent = track.artists;
+    info.append(title, artist);
+    const button = document.createElement('button');
+    button.className = 'btn btn-secondary btn-sm';
+    button.textContent = 'Unblock';
+    button.disabled = songBlockBusy;
+    button.onclick = () => changeSongBlock(track, false);
+    row.append(songTrackCover(track), info, button);
+    container.append(row);
+  });
+}
+
+async function loadSongBlocklist() {
+  const revision = ++songBlockRevision;
+  try {
+    const response = await fetch('/api/spotify/blocklist');
+    const data = await response.json();
+    if (revision !== songBlockRevision) return;
+    if (!response.ok || !Array.isArray(data)) throw new Error(data.error || 'Could not load block list');
+    songBlocklist = data;
+    songBlocklistLoaded = true;
+    renderSongBlocklist();
+    if (songSearchResults.length) renderSongSearchResults();
+    renderDefaultSong();
+  } catch (error) {
+    if (revision !== songBlockRevision) return;
+    const el = document.getElementById('song-blocklist-container');
+    if (el) el.textContent = error.message || 'Could not load block list. Click Refresh to retry.';
+  }
+}
+
+async function changeSongBlock(track, block) {
+  if (songBlockBusy) return;
+  songBlockBusy = true;
+  ++songBlockRevision;
+  renderSongBlocklist();
+  renderSongSearchResults();
+  try {
+    const response = await fetch('/api/spotify/blocklist' + (block ? '' : '/' + encodeURIComponent(track.uri.split(':').pop())), {
+      method: block ? 'POST' : 'DELETE',
+      headers: {'Content-Type': 'application/json'},
+      ...(block ? {body: JSON.stringify(track)} : {})
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success || !Array.isArray(data.tracks)) throw new Error(data.error || 'Could not update block list');
+    songBlocklist = data.tracks;
+    songBlocklistLoaded = true;
+    showToast(data.warning || (block ? 'Song blocked' : 'Song unblocked'), data.warning ? 'warning' : 'success');
+    fetchSongQueue();
+  } catch (error) {
+    showToast(error.message || 'Could not update block list', 'error');
+  } finally {
+    songBlockBusy = false;
+    renderSongBlocklist();
+    renderSongSearchResults();
+    renderDefaultSong();
+  }
+}
+
+let defaultSongTrack = null;
+let defaultSongRevision = 0;
+let defaultSongMessage = '';
+
+function songTrackCover(track) {
+  const placeholder = document.createElement('div');
+  placeholder.className = 'song-row-cover song-art-placeholder';
+  placeholder.textContent = '♪';
+  placeholder.setAttribute('aria-hidden', 'true');
+  try {
+    const url = new URL(track?.album_image || '');
+    if (url.protocol !== 'https:') return placeholder;
+    const image = document.createElement('img');
+    image.className = 'song-row-cover';
+    image.alt = '';
+    image.src = url.href;
+    image.onerror = () => image.replaceWith(placeholder);
+    return image;
+  } catch (_) { return placeholder; }
+}
+
+function renderDefaultSong() {
+  const uri = document.getElementById('song-default-track').value;
+  const card = document.getElementById('song-default-card');
+  const track = defaultSongTrack?.uri === uri ? defaultSongTrack : null;
+  const info = document.createElement('div');
+  info.className = 'song-default-info';
+  const title = document.createElement('div');
+  title.className = 'song-row-title';
+  title.textContent = track?.name || (uri ? 'Default song saved' : 'No default song');
+  const artist = document.createElement('div');
+  artist.className = 'song-row-sub';
+  artist.textContent = track?.artists || (uri ? defaultSongMessage || 'Song details unavailable. Connect Spotify and reload.' : 'Choose a song from Search below.');
+  info.append(title, artist);
+  if (track?.album) {
+    const album = document.createElement('div');
+    album.className = 'song-row-sub';
+    const seconds = Math.floor((track.duration_ms || 0) / 1000);
+    album.textContent = track.album + (seconds ? ` · ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : '');
+    info.appendChild(album);
+  }
+  const actions = document.createElement('div');
+  actions.className = 'song-default-actions';
+  const choose = document.createElement('button');
+  choose.type = 'button';
+  choose.className = 'btn btn-secondary btn-sm';
+  choose.textContent = uri ? 'Change' : 'Choose';
+  choose.onclick = chooseDefaultSong;
+  const clear = document.createElement('button');
+  clear.type = 'button';
+  clear.className = 'btn btn-ghost btn-sm';
+  clear.textContent = 'Clear';
+  clear.disabled = !uri;
+  clear.onclick = () => selectDefaultSong(null);
+  actions.append(choose, clear);
+  card.replaceChildren(songTrackCover(track), info, actions);
+  const dirty = uri !== (songConfig.loop_song_uri || '');
+  document.getElementById('song-default-status').textContent = dirty
+    ? 'Unsaved change — click Save Config to apply.'
+    : uri ? 'Saved default · requests take priority' : 'Default song disabled';
+  if (uri && songIsBlocked({uri})) document.getElementById('song-default-status').textContent = 'Blocked — this default cannot play. Clear it, choose another song, or unblock it.';
+}
+
+function selectDefaultSong(track) {
+  defaultSongRevision++;
+  defaultSongTrack = track ? { ...track } : null;
+  defaultSongMessage = '';
+  document.getElementById('song-default-track').value = track?.uri || '';
+  renderDefaultSong();
+}
+
+function chooseDefaultSong() {
+  const input = document.getElementById('song-test-search');
+  input.closest('section').scrollIntoView({block: 'center'});
+  input.focus({preventScroll: true});
+}
+
+async function loadDefaultSong(config) {
+  const revision = ++defaultSongRevision;
+  const uri = config.loop_song_uri || '';
+  document.getElementById('song-default-track').value = uri;
+  defaultSongTrack = config.loop_song_track?.uri === uri ? config.loop_song_track : null;
+  defaultSongMessage = 'Loading song details…';
+  renderDefaultSong();
+  if (!uri || defaultSongTrack) return;
+  try {
+    const res = await fetch('/api/spotify/default-track');
+    const data = await res.json();
+    if (revision !== defaultSongRevision) return;
+    defaultSongTrack = res.ok && data.uri === uri && data.track?.uri === uri ? data.track : null;
+    defaultSongMessage = typeof data.error === 'string' ? data.error : 'Song details unavailable. Connect Spotify and reload.';
+  } catch (_) {
+    if (revision !== defaultSongRevision) return;
+    defaultSongMessage = 'Could not load song details. Your saved default is unchanged.';
+  }
+  renderDefaultSong();
+}
+
 async function loadSongConfig() {
+  loadSongBlocklist();
   try {
     const res = await fetch('/api/spotify/config');
     const data = await res.json();
     songConfig = data;
 
+    loadDefaultSong(data);
     document.getElementById('song-play-cmd').value = data.play_command || '!play';
     document.getElementById('song-skip-cmd').value = data.skip_command || '!skip';
     document.getElementById('song-revoke-cmd').value = data.revoke_command || '!revoke';
@@ -4496,6 +4686,8 @@ async function saveSongConfig() {
       .split('\n').map(s => s.trim()).filter(Boolean);
 
     const data = {
+      loop_song_uri: document.getElementById('song-default-track').value.trim(),
+      loop_song_track: defaultSongTrack,
       play_command: document.getElementById('song-play-cmd').value,
       skip_command: document.getElementById('song-skip-cmd').value,
       revoke_command: document.getElementById('song-revoke-cmd').value,
@@ -4536,6 +4728,12 @@ async function saveSongConfig() {
       body: JSON.stringify(data)
     });
     const result = await res.json();
+    if (!res.ok) {
+      showToast(result.error || 'Error saving config', 'error');
+      return;
+    }
+    songConfig = Object.assign({}, songConfig, data);
+    renderDefaultSong();
     showToast(result.message, 'success');
     fetchSpotifyStatus();
   } catch(e) {
@@ -4689,6 +4887,7 @@ async function clearSongHistory() {
 async function testSongSearch() {
   const query = document.getElementById('song-test-search').value.trim();
   if (!query) return;
+  songSearchResults = [];
   const container = document.getElementById('song-test-results');
   container.innerHTML = '<div class="song-empty small"><span>Searching...</span></div>';
   try {
@@ -4707,16 +4906,23 @@ async function testSongSearch() {
       container.innerHTML = '<div class="song-empty small"><span>No results found.</span></div>';
       return;
     }
+    songSearchResults = results;
+    renderSongSearchResults();
+  } catch(e) {
+    container.innerHTML = `<div class="song-empty small" style="color:var(--danger);"><span>${esc(e.message || 'Search failed')}</span></div>`;
+    showToast(e.message || 'Search failed', 'error');
+  }
+}
+
+function renderSongSearchResults() {
+  const container = document.getElementById("song-test-results");
     container.innerHTML = '';
-    results.forEach(track => {
+    songSearchResults.forEach(track => {
       const div = document.createElement('div');
       div.className = 'song-row';
-      div.style.cursor = 'pointer';
-      div.onclick = () => testQueueTrack(track);
+      div.classList.add('song-search-result');
 
-      const albumImg = track.album_image
-        ? `<img src="${track.album_image}" alt="" class="song-row-cover">`
-        : `<div class="song-row-cover"><i class="fa-solid fa-music"></i></div>`;
+      const albumImg = '<div class="song-row-cover song-art-placeholder" aria-hidden="true">♪</div>';
       const explicit = track.explicit ? '<span class="song-explicit">E</span>' : '';
 
       div.innerHTML = `
@@ -4726,17 +4932,41 @@ async function testSongSearch() {
           <div class="song-row-sub">${esc(track.artists)}</div>
         </div>
       `;
+      div.firstElementChild.replaceWith(songTrackCover(track));
       const btn = document.createElement('button');
+      btn.type = 'button';
       btn.className = 'btn btn-primary btn-sm';
       btn.innerHTML = '<i class="fa-solid fa-plus"></i> Queue';
       btn.onclick = (event) => { event.stopPropagation(); testQueueTrack(track); };
-      div.appendChild(btn);
+      const actions = document.createElement('div');
+      actions.className = 'song-result-actions';
+      const pick = document.createElement('button');
+      pick.type = 'button';
+      pick.className = 'btn btn-secondary btn-sm';
+      pick.textContent = 'Use as default';
+      pick.onclick = () => { selectDefaultSong(track); document.querySelector('.song-default-field').scrollIntoView({block:'center'}); };
+      const blocked = songIsBlocked(track);
+      btn.disabled = blocked || songBlockBusy;
+      pick.disabled = blocked || songBlockBusy;
+      const blockButton = document.createElement('button');
+      blockButton.type = 'button';
+      blockButton.className = 'btn btn-ghost btn-sm song-block-button';
+      // Inline artwork stays visible offline and when the icon-font CDN fails.
+      blockButton.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"></circle><path d="M5.6 5.6 18.4 18.4"></path></svg>';
+      blockButton.setAttribute('aria-label', blocked ? 'Unblock song' : 'Block song');
+      blockButton.title = blocked ? 'Unblock song' : 'Block song';
+      blockButton.disabled = songBlockBusy;
+      blockButton.onclick = () => changeSongBlock(track, !blocked);
+      if (blocked) {
+        const badge = document.createElement('span');
+        badge.className = 'song-blocked-label';
+        badge.textContent = 'Blocked';
+        div.querySelector('.song-row-sub').append(' · ', badge);
+      }
+      actions.append(pick, btn, blockButton);
+      div.appendChild(actions);
       container.appendChild(div);
     });
-  } catch(e) {
-    container.innerHTML = `<div class="song-empty small" style="color:var(--danger);"><span>${esc(e.message || 'Search failed')}</span></div>`;
-    showToast(e.message || 'Search failed', 'error');
-  }
 }
 
 async function testQueueTrack(track) {
@@ -5304,78 +5534,30 @@ document.addEventListener('DOMContentLoaded', _bindPointsControls);
 // ==========================================
 // GIFT ROULETTE PANEL
 // ==========================================
+// Prizes are their own objects now (see static/roulette_prizes.js): a prize
+// owns its name, icon, action bundle and enabled switch, so editing a gift no
+// longer changes the prizes that were copied from it. script.js keeps the
+// panel shell, timing knobs, slot sounds, Test Spin and the save round-trip.
 let rouletteConfig = null;
-let roulettePool = [];          // array of gift_id strings, ordered
-let rouletteConfiguredGifts = []; // resolved entries from /api/roulette/config
+// Legacy field: round-tripped untouched so a save never drops it.
+let rouletteTriggerGiftId = '';
 
-function rouletteDisplayName(giftId) {
-  const entry = rouletteConfiguredGifts.find(e => e.gift_id === giftId);
-  if (entry) return entry.label;
-  return getGiftDisplayName(giftId);
-}
-
-function rouletteIcon(giftId) {
-  const entry = rouletteConfiguredGifts.find(e => e.gift_id === giftId);
-  return (entry && entry.icon_url) || giftIconMap[giftId] || '';
-}
-
-function renderRoulettePool() {
-  const list = document.getElementById('roulette-pool-list');
-  if (!list) return;
-  list.innerHTML = '';
-  roulettePool.forEach((giftId, idx) => {
-    const row = document.createElement('div');
-    row.className = 'roulette-pool-row';
-    const icon = rouletteIcon(giftId);
-    const img = document.createElement('img');
-    if (icon) { img.src = icon; img.alt = ''; } else { img.style.visibility = 'hidden'; }
-    const name = document.createElement('span');
-    name.className = 'roulette-pool-name';
-    name.textContent = rouletteDisplayName(giftId);
-    const id = document.createElement('span');
-    id.className = 'roulette-pool-id';
-    id.textContent = '#' + giftId;
-    const up = document.createElement('button');
-    up.className = 'btn btn-ghost btn-sm'; up.innerHTML = '<i class="fa-solid fa-arrow-up"></i>';
-    up.disabled = idx === 0;
-    up.onclick = () => { [roulettePool[idx-1], roulettePool[idx]] = [roulettePool[idx], roulettePool[idx-1]]; renderRoulettePool(); saveRouletteConfig(); };
-    const down = document.createElement('button');
-    down.className = 'btn btn-ghost btn-sm'; down.innerHTML = '<i class="fa-solid fa-arrow-down"></i>';
-    down.disabled = idx === roulettePool.length - 1;
-    down.onclick = () => { [roulettePool[idx+1], roulettePool[idx]] = [roulettePool[idx], roulettePool[idx+1]]; renderRoulettePool(); saveRouletteConfig(); };
-    const rm = document.createElement('button');
-    rm.className = 'btn btn-danger btn-sm'; rm.innerHTML = '&times;';
-    rm.onclick = () => { roulettePool.splice(idx, 1); renderRoulettePool(); fillRouletteAddSelect(); saveRouletteConfig(); };
-    row.appendChild(img); row.appendChild(name); row.appendChild(id);
-    const btns = document.createElement('span');
-    btns.className = 'roulette-pool-btns';
-    btns.appendChild(up); btns.appendChild(down); btns.appendChild(rm);
-    row.appendChild(btns);
-    list.appendChild(row);
+// Single warning renderer — server warnings plus RoulettePrizes' own notes
+// (e.g. a copied gift whose Roulette action had to be skipped).
+function renderRouletteWarnings(warnings) {
+  if (window.RoulettePrizes && RoulettePrizes.renderWarnings) {
+    RoulettePrizes.renderWarnings(warnings || []);
+    return;
+  }
+  const box = document.getElementById('roulette-warnings');
+  if (!box) return;
+  box.innerHTML = '';
+  (warnings || []).forEach(w => {
+    const div = document.createElement('div');
+    div.className = 'roulette-warning';
+    div.textContent = w;
+    box.appendChild(div);
   });
-  const count = document.getElementById('roulette-pool-count');
-  if (count) count.textContent = roulettePool.length + ' events';
-}
-
-function fillRouletteAddSelect() {
-  const sel = document.getElementById('roulette-add-select');
-  if (!sel) return;
-  const current = sel.value;
-  sel.innerHTML = '<option value="">Add configured gift…</option>';
-  // All configured gifts (currentConfig.Gifts) except GlobalActions/empties.
-  const gifts = (currentConfig && currentConfig.Gifts) || {};
-  Object.keys(gifts).forEach(gid => {
-    if (gid === 'GlobalActions') return;
-    const actions = gifts[gid];
-    if (!Array.isArray(actions) || actions.length === 0) return;
-    if (roulettePool.includes(gid)) return;
-    const opt = document.createElement('option');
-    opt.value = gid;
-    opt.textContent = `${rouletteDisplayName(gid)} (#${gid})`;
-    sel.appendChild(opt);
-  });
-  sel.value = current;
-  if (!sel.value) sel.value = '';
 }
 
 async function initRoulettePanel() {
@@ -5383,9 +5565,8 @@ async function initRoulettePanel() {
     const res = await fetch('/api/roulette/config', { cache: 'no-store' });
     const body = await res.json();
     rouletteConfig = body.roulette || null;
-    rouletteConfiguredGifts = body.resolved_entries || [];
+    rouletteTriggerGiftId = (rouletteConfig && rouletteConfig.trigger_gift_id) || '';
     if (rouletteConfig) {
-      roulettePool = [...(rouletteConfig.pool || [])];
       const en = document.getElementById('roulette-enabled');
       if (en) en.checked = !!rouletteConfig.enabled;
       const spin = document.getElementById('roulette-spin-ms');
@@ -5395,8 +5576,11 @@ async function initRoulettePanel() {
       if (hold) hold.value = Math.round((rouletteConfig.hold_ms || 4000) / 1000);
       if (cd) cd.value = Math.round((rouletteConfig.cooldown_ms || 2000) / 1000);
     }
-    renderRoulettePool();
-    fillRouletteAddSelect();
+    if (window.RoulettePrizes) {
+      RoulettePrizes.onChange = () => saveRouletteConfig(true);
+      RoulettePrizes.bindControls();
+      RoulettePrizes.load(body);
+    }
     renderRouletteWarnings(body.warnings || []);
     bindRouletteAutosave();
   } catch (e) {
@@ -5424,24 +5608,15 @@ function bindRouletteAutosave() {
   });
 }
 
-function renderRouletteWarnings(warnings) {
-  const box = document.getElementById('roulette-warnings');
-  if (!box) return;
-  box.innerHTML = '';
-  (warnings || []).forEach(w => {
-    const div = document.createElement('div');
-    div.className = 'roulette-warning';
-    div.textContent = w;
-    box.appendChild(div);
-  });
-}
-
 // ── Roulette autosave ──
-// Every control persists itself (debounced) — there is no Save button.
-// Each save PUTs the full Roulette block assembled from current UI state,
-// shows a quiet "Saved ✓" / warning in the status line, and applies live
-// via the server hot-reload signal. Failures restore the last-known-good
-// checkbox state and surface an error toast; nothing is ever discarded.
+// Every control persists itself (debounced) — there is no Save button; the
+// prize editor's own Save/Cancel only stands between the draft and the model.
+// Each save PUTs the full Roulette block (timings + the whole prizes array)
+// assembled from current UI state, shows a quiet "Saved ✓" / warning in the
+// status line, and applies live via the server hot-reload signal. A failure
+// keeps every local edit (never a discard); a stale response never overwrites
+// a newer prize edit; and currentConfig.Roulette is refreshed on success so the
+// general settings Save cannot revert this panel.
 let rouletteSaveTimer = null;
 let rouletteSaving = false;
 
@@ -5450,13 +5625,27 @@ function rouletteCollectPayload() {
   const spin = document.getElementById('roulette-spin-ms');
   const hold = document.getElementById('roulette-hold-ms');
   const cd = document.getElementById('roulette-cooldown-ms');
+  const prizes = (window.RoulettePrizes && RoulettePrizes.collect()) || [];
   return {
     enabled: !!(en && en.checked),
+    // Legacy field: preserved verbatim, never silently reset.
+    trigger_gift_id: rouletteTriggerGiftId,
     spin_ms: Math.round(parseFloat(spin ? spin.value : '5') * 1000),
     hold_ms: Math.round(parseFloat(hold ? hold.value : '4') * 1000),
     cooldown_ms: Math.round(parseFloat(cd ? cd.value : '2') * 1000),
-    pool: [...roulettePool],
+    // `prizes` is authoritative; `pool` rides along as legacy compatibility info.
+    prizes: prizes,
+    pool: window.RoulettePrizes ? RoulettePrizes.legacyPool(prizes) : [],
+    schema_version: 2,
   };
+}
+
+// Keep currentConfig.Roulette equal to what the panel now holds. The dashboard's
+// general Save POSTs the WHOLE currentConfig, so without this a later settings
+// save would revert every prize edit made here.
+function rouletteSyncCurrentConfig(serverRoulette) {
+  if (!currentConfig) return;
+  currentConfig.Roulette = serverRoulette || rouletteCollectPayload();
 }
 
 function rouletteSaveState(text, kind) {
@@ -5480,6 +5669,10 @@ async function saveRouletteConfig(immediate) {
   }
   rouletteSaving = true;
   rouletteSaveState('Saving…', 'saving');
+  // Local prize revision when this request left. A response that lands after a
+  // newer edit must NOT be adopted — adopting it used to revert the newer prize
+  // (including an open editor's prize) to the older bundle.
+  const sentRevision = window.RoulettePrizes ? RoulettePrizes.revision : 0;
   try {
     const res = await fetch('/api/roulette/config', {
       method: 'PUT',
@@ -5487,11 +5680,24 @@ async function saveRouletteConfig(immediate) {
       body: JSON.stringify(rouletteCollectPayload()),
     });
     const body = await res.json();
-    if (!res.ok) { showToast(body.message || 'Save failed', 'error'); rouletteSaveState('Save failed — retrying on next change', 'error'); return; }
-    if (body.roulette) {
+    if (!res.ok) {
+      // Nothing is discarded: every local prize (and any open draft) is kept.
+      showToast(body.message || 'Save failed', 'error');
+      rouletteSaveState('Save failed — your edits are kept, retrying on next change', 'error');
+      rouletteSyncCurrentConfig(null);
+      return;
+    }
+    const stale = window.RoulettePrizes && RoulettePrizes.revision !== sentRevision;
+    if (!stale && body.roulette) {
       rouletteConfig = body.roulette;
-      roulettePool = [...(body.roulette.pool || [])];
-      renderRoulettePool();
+      rouletteTriggerGiftId = body.roulette.trigger_gift_id || rouletteTriggerGiftId;
+      if (window.RoulettePrizes) RoulettePrizes.applyServer(body.roulette);
+      rouletteSyncCurrentConfig(body.roulette);
+    } else {
+      // Newer local state wins; push the latest model into currentConfig so the
+      // general settings Save cannot revert it either.
+      rouletteSyncCurrentConfig(null);
+      rouletteSaveTimer = setTimeout(() => saveRouletteConfig(true), 200);
     }
     renderRouletteWarnings(body.warnings || []);
     if (body.warnings && body.warnings.length) {
@@ -5499,6 +5705,8 @@ async function saveRouletteConfig(immediate) {
       const en = document.getElementById('roulette-enabled');
       if (en) en.checked = false;
       rouletteSaveState('Saved ✓ (disabled — ' + body.warnings[0] + ')', 'warn');
+    } else if (stale) {
+      rouletteSaveState('Saved ✓ — a newer edit is still saving…', 'saving');
     } else {
       rouletteSaveState(
         'Saved ✓ ' + (body.roulette && body.roulette.enabled ? '(live)' : '(disabled)'), 'ok'
@@ -5506,7 +5714,9 @@ async function saveRouletteConfig(immediate) {
     }
   } catch (e) {
     showToast('Save failed', 'error');
-    rouletteSaveState('Save failed — retrying on next change', 'error');
+    rouletteSaveState('Save failed — your edits are kept, retrying on next change', 'error');
+    rouletteSyncCurrentConfig(null);
+    if (window.RoulettePrizes) RoulettePrizes.renderWarnings([]);
   } finally {
     rouletteSaving = false;
   }
@@ -5657,17 +5867,10 @@ function scheduleRouletteTestSpinAudio(startDelayMs, rollMs) {
 // Bind roulette controls once DOM is ready.
 document.addEventListener('DOMContentLoaded', () => {
   const test = document.getElementById('btn-roulette-test');
-  const add = document.getElementById('btn-roulette-add');
   const sound = document.getElementById('btn-roulette-sound');
   if (sound) sound.onclick = playRouletteSoundPreview;
   if (test) test.onclick = testRouletteSpin;
-  if (add) add.onclick = () => {
-    const sel = document.getElementById('roulette-add-select');
-    if (sel && sel.value && !roulettePool.includes(sel.value)) {
-      roulettePool.push(sel.value);
-      renderRoulettePool();
-      fillRouletteAddSelect();
-      saveRouletteConfig();
-    }
-  };
+  // Prize list + prize editor controls (copy from gift, add, edit, duplicate,
+  // delete, enable) live in static/roulette_prizes.js.
+  if (window.RoulettePrizes) RoulettePrizes.bindControls();
 });

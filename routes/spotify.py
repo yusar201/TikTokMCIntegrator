@@ -2,6 +2,7 @@
 
 from flask import Blueprint, request, jsonify
 import spotify_handler as sh
+import re
 
 spotify_bp = Blueprint('spotify', __name__)
 
@@ -18,13 +19,73 @@ def get_song_config():
 @spotify_bp.route("/config", methods=["POST"])
 def update_song_config():
     """Update the song configuration."""
-    data = request.json
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Song config must be a JSON object."}), 400
+    if "loop_song_uri" in data:
+        value = data["loop_song_uri"]
+        if not isinstance(value, str):
+            return jsonify({"error": "Default song must be a Spotify track link or URI."}), 400
+        value = value.strip()
+        if value:
+            match = re.fullmatch(r"spotify:track:([A-Za-z0-9]{22})", value)
+            if not match:
+                match = re.fullmatch(
+                    r"https://open\.spotify\.com/(?:intl-[a-zA-Z-]+/)?track/([A-Za-z0-9]{22})/?(?:[?#][^\s]*)?",
+                    value,
+                )
+            if not match:
+                return jsonify({"error": "Use a Spotify track link or URI, not an album or playlist. Leave blank to disable."}), 400
+            value = "spotify:track:" + match.group(1)
+        data["loop_song_uri"] = value
     cfg = sh.load_config()
+    uri = data.get("loop_song_uri", cfg.get("loop_song_uri", ""))
+    # Full-form saves include the unchanged default. Keep it editable even when
+    # blocked, but reject selecting a new blocked default. Playback stays guarded.
+    if uri and uri != cfg.get("loop_song_uri", ""):
+        denied = sh.song_block_error(uri)
+        if denied:
+            return jsonify(denied), 400
+    if data.get("loop_song_track") is not None:
+        try:
+            data["loop_song_track"] = sh.clean_default_track(data["loop_song_track"], uri)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+    if not uri or uri != cfg.get("loop_song_uri", ""):
+        data.setdefault("loop_song_track", None)
     for key in data:
         if key in cfg:
             cfg[key] = data[key]
     sh.save_config(cfg)
     return jsonify({"status": "success", "message": "Song config saved!"})
+
+
+@spotify_bp.route("/default-track", methods=["GET"])
+def default_song_details():
+    """Display metadata without affecting the queue or playback."""
+    return jsonify(sh.get_default_track())
+
+
+@spotify_bp.route("/blocklist", methods=["GET", "POST"])
+def song_blocklist():
+    try:
+        if request.method == "GET":
+            return jsonify(sh.load_song_blocklist())
+        return jsonify(sh.block_song(request.get_json(silent=True)))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except (sh.sqlite3.Error, OSError):
+        return jsonify({"error": "Song block list could not be read or saved."}), 503
+
+
+@spotify_bp.route("/blocklist/<track_id>", methods=["DELETE"])
+def unblock_song(track_id):
+    try:
+        return jsonify(sh.unblock_song(track_id))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except (sh.sqlite3.Error, OSError):
+        return jsonify({"error": "Song block list could not be updated."}), 503
 
 
 @spotify_bp.route("/auth-url", methods=["GET"])
@@ -121,6 +182,7 @@ def spotify_search():
     results = sh.search_track(query)
     if "error" in results:
         return jsonify(results), 400
+    results = [dict(track, blocked=bool(sh.song_block_error(track.get("uri", "")))) for track in results]
     return jsonify(results)
 
 
@@ -230,11 +292,6 @@ def simulate_play():
         return jsonify(result), 400
 
     pos = result.get("position", 0) + 1
-    sh.push_song_feedback(
-        nick, "success", "✓",
-        f"@{nick} queued {track['name']} \u2014 {track['artists']}",
-        f"Position #{pos} \u2022 Use !pull to remove your request"
-    )
 
     # Try direct push if nothing playing
     try:
@@ -260,7 +317,10 @@ def simulate_play():
                 if not spotify_playing and not spotify_item:
                     # Nothing playing anywhere → play immediately via
                     # play_track_immediate (local-only architecture).
-                    sh.play_track_immediate(track["uri"])
+                    start_result = sh.play_track_immediate(track["uri"])
+                    if start_result.get("code") in ("song_blocked", "blocklist_unavailable"):
+                        sh.push_song_feedback(nick, "error", "✗", f"@{nick} — {start_result['error']}")
+                        return jsonify(start_result), 400
                     queue = sh.load_queue()
                     new_pos = None
                     for i, q in enumerate(queue):
@@ -272,7 +332,10 @@ def simulate_play():
                 else:
                     # Loop song / non-user song is playing on Spotify, no
                     # user song in our local queue → replace context.
-                    sh.play_track_immediate(track["uri"])
+                    start_result = sh.play_track_immediate(track["uri"])
+                    if start_result.get("code") in ("song_blocked", "blocklist_unavailable"):
+                        sh.push_song_feedback(nick, "error", "✗", f"@{nick} — {start_result['error']}")
+                        return jsonify(start_result), 400
                     queue = sh.load_queue()
                     new_pos = None
                     for i, q in enumerate(queue):
@@ -283,6 +346,12 @@ def simulate_play():
                         sh.mark_as_playing(new_pos)
     except Exception as e:
         print(f"[SIMULATE] Direct push error (non-fatal): {e}")
+
+    sh.push_song_feedback(
+        nick, "success", "✓",
+        f"@{nick} queued {track['name']} \u2014 {track['artists']}",
+        f"Position #{pos} \u2022 Use !pull to remove your request"
+    )
 
     return jsonify({"success": True, "track": track, "position": pos, "feedback_pushed": True})
 

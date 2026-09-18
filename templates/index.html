@@ -9,7 +9,7 @@
   try { if (localStorage.getItem('tmc-theme') === 'light') document.documentElement.setAttribute('data-theme','light'); } catch(e){}
 </script>
 <link rel="stylesheet" href="/static/app-font.css?v=1">
-<link rel="stylesheet" href="/static/style.css?v=53">
+<link rel="stylesheet" href="/static/style.css?v=59">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -486,7 +486,7 @@
 
         <div class="roulette-grid">
           <div class="roulette-col">
-            <div class="form-hint" style="margin-bottom:12px;">Attach a <strong>Roulette</strong> action on any gift or event (Gifts / Events / Global Actions) to start a spin. Pool, timing, and sounds are configured here.</div>
+            <div class="form-hint" style="margin-bottom:12px;">Attach a <strong>Roulette</strong> action on any gift or event (Gifts / Events / Global Actions) to start a spin. Prizes, timing, and sounds are configured here.</div>
 
             <h3><i class="fa-solid fa-clock"></i> Timing</h3>
             <div class="roulette-timings">
@@ -503,13 +503,16 @@
           </div>
 
           <div class="roulette-col">
-            <h3><i class="fa-solid fa-list"></i> Prize Pool <span id="roulette-pool-count" class="roulette-count">0 events</span></h3>
-            <div class="form-hint">Every entry is one of your configured gifts — the whole action bundle runs when it wins.</div>
-            <div id="roulette-pool-list" class="roulette-pool-list"></div>
-            <div class="roulette-pool-actions">
-              <select id="roulette-add-select" class="form-input"><option value="">Add configured gift…</option></select>
-              <button class="btn btn-ghost btn-sm" id="btn-roulette-add"><i class="fa-solid fa-plus"></i> Add</button>
+            <h3><i class="fa-solid fa-gift"></i> Prizes <span id="roulette-prize-count" class="roulette-count">0 / 100</span></h3>
+            <div class="form-hint">Each prize runs its own action bundle when it wins — it is independent of the gift it was copied from. Every <strong>enabled</strong> prize has <strong>equal odds</strong>.</div>
+            <div class="roulette-odds-line" id="roulette-odds-line"></div>
+            <div id="roulette-prize-list" class="roulette-prize-list"></div>
+            <div class="roulette-prize-toolbar">
+              <select id="roulette-gift-template-select" class="form-input"><option value="">Copy from gift…</option></select>
+              <button class="btn btn-ghost btn-sm" id="btn-roulette-copy-gift" type="button"><i class="fa-solid fa-copy"></i> Copy from gift</button>
+              <button class="btn btn-ghost btn-sm" id="btn-roulette-add-prize" type="button"><i class="fa-solid fa-plus"></i> New prize</button>
             </div>
+            <div class="roulette-prize-quick" id="roulette-prize-quick"></div>
             <div id="roulette-warnings" class="roulette-warnings"></div>
           </div>
         </div>
@@ -519,6 +522,55 @@
         <h3><i class="fa-solid fa-tv"></i> Last Spin</h3>
         <div id="roulette-status" class="roulette-status">No spins yet this session.</div>
         <div id="roulette-save-state" class="roulette-save-state"></div>
+      </div>
+    </div>
+
+    <!-- ===== ROULETTE PRIZE EDITOR ===== -->
+    <div class="modal-overlay" id="roulette-prize-modal" aria-hidden="true">
+      <div class="modal-box" style="max-width:620px;">
+        <div class="modal-header">
+          <h3 id="roulette-prize-modal-title"><i class="fa-solid fa-dice"></i> Edit prize</h3>
+          <button class="modal-close" type="button" id="btn-roulette-prize-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="roulette-prize-fields">
+            <label class="roulette-prize-field">
+              <span>Prize name</span>
+              <input type="text" id="roulette-prize-name" class="form-input" maxlength="60" placeholder="e.g. Diamond Rain">
+            </label>
+            <label class="roulette-prize-field">
+              <span>Icon URL <em>(optional)</em></span>
+              <input type="text" id="roulette-prize-icon" class="form-input" placeholder="/static/... or https://...">
+            </label>
+          </div>
+          <div class="roulette-prize-icon-row">
+            <span class="roulette-prize-icon-preview" id="roulette-prize-icon-preview"></span>
+            <span class="roulette-prize-icon-hint" id="roulette-prize-icon-hint"></span>
+          </div>
+          <div class="roulette-prize-origin" id="roulette-prize-source"></div>
+          <label class="roulette-toggle roulette-prize-enabled-row">
+            <input type="checkbox" id="roulette-prize-enabled">
+            <span>Enabled — included in the spin with equal odds</span>
+          </label>
+          <div class="roulette-modal-error" id="roulette-prize-error" data-state=""></div>
+          <div class="form-group" style="margin-top:12px;">
+            <label>Actions <em>(what this prize does in Minecraft)</em></label>
+            <div class="form-hint">The whole bundle runs when this prize wins. Roulette is not offered here — a spin cannot start another spin.</div>
+            <div id="roulette-prize-actions"></div>
+            <div class="roulette-prize-action-tools" id="roulette-prize-action-tools">
+              <button class="btn btn-ghost btn-sm" type="button" data-add-action="minecraft"><i class="fa-solid fa-terminal"></i> Minecraft</button>
+              <button class="btn btn-ghost btn-sm" type="button" data-add-action="sound"><i class="fa-solid fa-volume-high"></i> Sound</button>
+              <button class="btn btn-ghost btn-sm" type="button" data-add-action="webhook"><i class="fa-solid fa-link"></i> Webhook</button>
+              <button class="btn btn-ghost btn-sm" type="button" data-add-action="random"><i class="fa-solid fa-shuffle"></i> Random</button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-ghost btn-sm" type="button" id="btn-roulette-prize-cancel">Cancel</button>
+            <button class="btn btn-primary btn-sm" type="button" id="btn-roulette-prize-save">Save prize</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1032,6 +1084,14 @@
                 </div>
               </div>
 
+              <div class="song-default-field">
+                <span class="song-default-label">Default song</span>
+                <input type="hidden" id="song-default-track">
+                <div id="song-default-card" class="song-row song-default-card" aria-live="polite"></div>
+                <p id="song-default-status" role="status"></p>
+                <p id="song-default-help">Plays when the request queue runs out. Choose from Search below, then Save Config. Clearing disables the default. Saving never interrupts the current song.</p>
+              </div>
+
               <div class="song-settings-row">
                 <label class="song-toggle"><input type="checkbox" id="song-enabled" checked><span>Enable requests</span></label>
                 <label class="song-toggle"><input type="checkbox" id="song-allow-explicit" checked><span>Allow explicit</span></label>
@@ -1063,12 +1123,12 @@
             <section class="song-card">
               <div class="song-card-header">
                 <div>
-                  <h3><i class="fa-solid fa-flask"></i> Test Search</h3>
-                  <p>Search a track and queue it manually for testing.</p>
+                  <h3><i class="fa-solid fa-flask"></i> Search songs</h3>
+                  <p>Choose your default song, or queue a track for testing.</p>
                 </div>
               </div>
               <div class="song-search-row">
-                <input type="text" id="song-test-search" placeholder="Search for a song..." class="form-input">
+                <input type="text" id="song-test-search" onkeydown="if(event.key==='Enter')testSongSearch()" placeholder="Search for a song..." class="form-input">
                 <button class="btn btn-primary" onclick="testSongSearch()"><i class="fa-solid fa-magnifying-glass"></i> Search</button>
               </div>
               <div id="song-test-results" class="song-list compact"></div>
@@ -1169,6 +1229,15 @@
               <div id="song-history-container" class="song-list compact">
                 <div class="song-empty small"><span>No history yet.</span></div>
               </div>
+            </section>
+            <section class="song-card" id="song-blocklist-panel">
+              <div class="song-card-header compact song-blocklist-header">
+                <h3><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M5.6 5.6 18.4 18.4"></path></svg> Block list</h3>
+                <button class="btn btn-ghost btn-sm" onclick="loadSongBlocklist()" aria-label="Refresh block list" title="Refresh block list"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"></path></svg></button>
+              </div>
+              <p class="song-blocklist-description">Blocked songs cannot queue or play as the default.</p>
+              <div id="song-blocklist-count" class="song-history-count">0 songs</div>
+              <div id="song-blocklist-container" class="song-list compact" aria-live="polite"><div class="song-empty small">Loading block list…</div></div>
             </section>
           </aside>
         </div>
@@ -1775,6 +1844,7 @@
 <script src="/static/overlay_previews.js?v=1"></script>
 <script src="/static/points_period.js?v=1"></script>
 <script src="/static/song_history_filters.js?v=1"></script>
-<script src="/static/script.js?v=66"></script>
+<script src="/static/roulette_prizes.js?v=1"></script>
+<script src="/static/script.js?v=74"></script>
 </body>
 </html>

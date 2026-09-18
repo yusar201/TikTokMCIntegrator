@@ -3338,6 +3338,15 @@ textarea.form-input:focus {
   margin-bottom: 16px;
 }
 .song-card-header.compact { margin-bottom: 12px; }
+#song-blocklist-panel .song-blocklist-header { align-items: center; gap: 8px; margin-bottom: 8px; }
+#song-blocklist-panel .song-blocklist-header h3 { margin: 0; min-width: 0; }
+#song-blocklist-panel .song-blocklist-header svg { flex-shrink: 0; }
+#song-blocklist-panel .song-blocklist-header h3 svg { color: var(--text-secondary); }
+#song-blocklist-panel .song-blocklist-header button { flex: 0 0 32px; width: 32px; height: 32px; padding: 6px; display: inline-flex; align-items: center; justify-content: center; }
+.song-blocklist-description { margin: 0 0 12px; font-size: 12px; line-height: 1.45; color: var(--text-secondary); }
+#song-blocklist-panel .song-blocklist-empty { gap: 5px; padding: 12px; text-align: center; min-height: 76px; }
+.song-blocklist-empty strong { font-size: 12px; color: var(--text-secondary); }
+.song-blocklist-empty span { font-size: 11px; line-height: 1.5; color: var(--text-muted); }
 .song-card-header h3 {
   display: flex;
   align-items: center;
@@ -3385,6 +3394,23 @@ textarea.form-input:focus {
   gap: 14px;
 }
 .song-span-2 { grid-column: span 2; }
+.song-default-field { margin: 14px 0; min-width: 0; }
+.song-default-label { display: block; font-weight: 600; margin-bottom: 8px; }
+.song-default-card { flex-wrap: wrap; }
+.song-default-info, .song-block-info { flex: 1; min-width: 0; }
+.song-blocked-label, .song-block-button { color: var(--danger); }
+.song-blocked-row .song-row-title, .song-blocked-row .song-row-sub { white-space: normal; overflow-wrap: anywhere; }
+.song-blocked-row > button { flex-shrink: 0; }
+.song-default-card .song-row-title, .song-default-card .song-row-sub { white-space: normal; overflow-wrap: anywhere; }
+.song-default-actions, .song-result-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+.song-art-placeholder { display: grid; place-items: center; color: var(--text-muted); font-size: 24px; }
+.song-search-result { flex-wrap: wrap; }
+.song-search-result .song-result-actions { margin-left: auto; }
+@media (max-width: 680px) {
+  .song-search-result .song-result-actions { width: 100%; padding-left: 0; }
+}
+.song-default-field p { font-size: 12px; line-height: 1.5; color: var(--text-muted); margin: 7px 0 0; }
+
 .song-settings-row {
   display: flex;
   align-items: center;
@@ -3511,7 +3537,8 @@ textarea.form-input:focus {
   gap: 10px;
   margin-bottom: 10px;
 }
-.song-list .song-row {
+.song-list .song-row,
+.song-default-card {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -5078,3 +5105,230 @@ body[data-skin="pixel"] .song-feedback-user { color: var(--px-green) !important;
 .roulette-save-state[data-state="error"] { color: #c25b5b; }
 .roulette-save-state[data-state="editing"],
 .roulette-save-state[data-state="saving"] { opacity: 0.7; font-style: italic; }
+
+/* ==========================================
+   ROULETTE PRIZES (independent prize cards + prize editor)
+   Compact cards: icon | name + meta | enable + row actions.
+   ========================================== */
+.roulette-odds-line {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 5px 8px;
+  margin-bottom: 8px;
+  background: var(--inset-bg, rgba(0,0,0,.25));
+  border-left: 3px solid var(--gold);
+}
+[data-theme="light"] .roulette-odds-line { color: var(--wood-dk); }
+.roulette-prize-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.roulette-prize-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px dashed var(--border-subtle);
+}
+.roulette-prize-empty strong { color: var(--text-primary); font-size: 13px; }
+.roulette-prize-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  min-height: 44px;
+  box-sizing: border-box;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--gold);
+}
+.roulette-prize-card.is-disabled { border-left-color: var(--border-default); opacity: .62; }
+.roulette-prize-icon {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--inset-bg, rgba(0,0,0,.25));
+  color: var(--text-muted);
+}
+.roulette-prize-icon img {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+.roulette-prize-fallback-wrap { display: inline-flex; }
+.roulette-prize-main { flex: 1; min-width: 0; }
+.roulette-prize-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.roulette-prize-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.roulette-prize-source {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.roulette-prize-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 1px;
+}
+.roulette-prize-odds { color: var(--gold); }
+[data-theme="light"] .roulette-prize-odds { color: var(--wood-dk); }
+.roulette-prize-off { color: var(--danger); }
+.roulette-prize-controls {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+.roulette-prize-controls .btn {
+  padding: 3px 7px;
+  font-size: 11px;
+  line-height: 1.2;
+}
+.roulette-prize-controls .btn:disabled { opacity: .35; }
+.roulette-prize-toggle {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 2px;
+  cursor: pointer;
+}
+.roulette-prize-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.roulette-prize-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.roulette-prize-toolbar select { flex: 1; min-width: 140px; }
+.roulette-prize-quick {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.roulette-prize-quick-hint { font-size: 11px; color: var(--text-muted); }
+.roulette-prize-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 3px 8px 3px 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 12px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.roulette-prize-chip:hover:not(:disabled) { border-color: var(--border-active); background: var(--bg-hover); }
+.roulette-prize-chip:disabled { opacity: .45; cursor: not-allowed; }
+.roulette-prize-chip .roulette-prize-icon { flex: 0 0 20px; width: 20px; height: 20px; }
+.roulette-prize-chip .roulette-prize-icon img { width: 20px; height: 20px; }
+.roulette-prize-chip-label { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Prize editor modal */
+.roulette-prize-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 700px) {
+  .roulette-prize-fields { grid-template-columns: 1fr; }
+}
+.roulette-prize-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; }
+.roulette-prize-field em { font-weight: 400; color: var(--text-muted); font-style: normal; }
+.roulette-prize-icon-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.roulette-prize-icon-preview {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--inset-bg, rgba(0,0,0,.25));
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+}
+.roulette-prize-icon-preview img { width: 40px; height: 40px; object-fit: contain; image-rendering: pixelated; }
+.roulette-prize-icon-preview.is-invalid { border-color: var(--danger); color: var(--danger); }
+.roulette-prize-icon-hint { font-size: 11px; color: var(--text-muted); }
+.roulette-prize-origin {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 10px;
+  padding: 6px 8px;
+  background: var(--inset-bg, rgba(0,0,0,.2));
+  border-left: 3px solid var(--border-default);
+}
+.roulette-prize-enabled-row { margin-top: 10px; font-size: 12px; font-weight: 500; }
+.roulette-modal-error {
+  display: none;
+  margin-top: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--warn-text);
+  background: rgba(232,116,92,.10);
+  border-left: 3px solid var(--danger);
+}
+.roulette-modal-error[data-state="error"] { display: block; }
+.roulette-prize-action-tools {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.roulette-prize-unsupported {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border: 1px dashed var(--border-default);
+}
+#roulette-prize-actions .action-row { margin-bottom: 8px; }

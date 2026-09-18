@@ -17,6 +17,10 @@ Two API facts that cost real debugging time:
 """
 from __future__ import annotations
 
+import json
+import os
+import time
+
 import gift_catalog
 
 EULER_HOST = "https://tiktok.eulerstream.com"
@@ -43,6 +47,81 @@ _BROWSER_UA = (
 )
 
 _TIMEOUT_SECONDS = 45
+
+# The full region + catalog sync is ~20 region requests plus up to 28 catalog
+# pages, each with a 45s timeout. That burst is fine once, but on a flaky link
+# it competes with the signed Websocket exactly when latency matters most, and
+# every reconnect re-ran it — so a connection that dropped repeatedly amplified
+# its own problem. Gate the automatic run; the dashboard's "Sync Gift Catalog"
+# button always forces one.
+AUTO_SYNC_MIN_INTERVAL_HOURS = 12
+AUTO_SYNC_FAILURE_RETRY_MINUTES = 30
+AUTO_SYNC_STATE_FILENAME = "gift_catalog_sync_state.json"
+
+
+def _read_sync_state(state_path) -> dict:
+    try:
+        with open(state_path, "r", encoding="utf-8") as stream:
+            data = json.load(stream)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def should_run_auto_sync(state_path, *, now: float | None = None) -> bool:
+    """Whether the connect-time catalog sync is due.
+
+    A missing/corrupt state file counts as "never synced" so a fresh install
+    still learns the catalog on its first connect.
+    """
+    now = time.time() if now is None else now
+    record = _read_sync_state(state_path)
+    last = record.get("last_attempt")
+    if isinstance(last, bool) or not isinstance(last, (int, float)):
+        return True
+    interval = (
+        AUTO_SYNC_MIN_INTERVAL_HOURS * 3600
+        if record.get("ok")
+        else AUTO_SYNC_FAILURE_RETRY_MINUTES * 60
+    )
+    return (now - last) >= interval
+
+
+def record_auto_sync(state_path, *, ok: bool = True, summary: str | None = None,
+                     now: float | None = None) -> None:
+    """Remember that the automatic sync was attempted.
+
+    Records the ATTEMPT, not just the success: on a link that keeps dropping,
+    retrying the whole burst on every reconnect is worse than waiting.
+    """
+    now = time.time() if now is None else now
+    payload: dict = {"last_attempt": float(now), "ok": bool(ok)}
+    if summary:
+        payload["summary"] = str(summary)
+    try:
+        parent = os.path.dirname(str(state_path))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(state_path, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, indent=2)
+    except Exception:
+        pass
+
+
+def claim_auto_sync(state_path, *, now: float | None = None) -> bool:
+    """Decide AND reserve in one step. True only for the caller that may run.
+
+    The reservation happens BEFORE the work starts, not when it finishes. That
+    distinction is the whole point: the first version recorded the attempt in
+    the sync's `finally`, so closing the app mid-sync left no state file at all
+    and the next connect re-ran the full burst — the exact amplification this
+    gate exists to prevent. Reserving up front means an interrupted run still
+    counts, and only the retry window decides when it may try again.
+    """
+    if not should_run_auto_sync(state_path, now=now):
+        return False
+    record_auto_sync(state_path, ok=False, now=now)
+    return True
 
 
 def build_headers(api_key: str) -> dict:

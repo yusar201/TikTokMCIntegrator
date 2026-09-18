@@ -16,6 +16,7 @@ from event_registry import get_registry_for_api, get_registry_with_categories, g
 from actions import migrate_to_events_redesign, migrate_config_actions
 import spotify_handler as sh
 import gift_roulette
+import copy
 from utils import load_json, save_json, safe_json_read
 from constants import *
 from routes.spotify import spotify_bp
@@ -39,6 +40,7 @@ import addon_runtime_registry
 from sim_console_log import append_line as append_sim_console_line
 from sim_console_log import clear_log as clear_sim_console_log
 from sim_console_log import read_tail as read_sim_console_tail
+from sim_console_log import append_line as append_bot_console_line
 import bot_status as bot_status_mod
 from gift_simulation import build_dashboard_sender, simulate_gift
 
@@ -384,13 +386,48 @@ def signal_reload():
     except Exception as e:
         print(f"Failed to signal config reload: {e}")
 
+BOT_CONSOLE_LOG = "bot_console.log"
+_BOT_CONSOLE_MAX_BYTES = 2_000_000
+_BOT_CONSOLE_KEEP_LINES = 3_000
+
+
+def _persist_bot_console(line):
+    """Mirror the bot's stdout to a bounded file in logs/.
+
+    The in-memory console list dies with this process, so a finished session
+    could not be diagnosed afterwards — exactly the case when TikTok events went
+    stale and the operator needed the reconnect history. Each persisted line
+    carries a wall-clock stamp: without one, a drop could be read but never
+    timed, and "how long was it up before it died" is the number that separates
+    a flaky link from an unusable one. Never raises: losing a log line must not
+    cost the dashboard its live console.
+    """
+    if not line:
+        return
+    try:
+        stamped = f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {line}"
+        append_bot_console_line(
+            paths.logs(BOT_CONSOLE_LOG),
+            stamped,
+            max_bytes=_BOT_CONSOLE_MAX_BYTES,
+            keep_lines=_BOT_CONSOLE_KEEP_LINES,
+        )
+    except Exception:
+        pass
+
+
 def read_output(pipe):
     global bot_logs
+    # Session separator so logs/bot_console.log stays readable across restarts.
+    # (The persisted-line stamp supplies the time.)
+    _persist_bot_console("--- Bot session started ---")
     for line in iter(pipe.readline, ''):
+        stripped = line.strip()
         with _bot_logs_lock:
-            bot_logs.append(line.strip())
+            bot_logs.append(stripped)
             if MAX_LOGS > 0 and len(bot_logs) > MAX_LOGS:
                 bot_logs.pop(0)
+        _persist_bot_console(stripped)
 
     # Bot process exited on its own (stream ended naturally)
     # Generate report and clean up
@@ -435,6 +472,11 @@ def get_config():
 @app.route("/api/config", methods=["POST"])
 def update_config():
     data = request.json
+    # Roulette owns its own save endpoint. General settings may carry a stale
+    # browser snapshot; never let it overwrite independent prizes.
+    existing_roulette = (load_config().get("Roulette") or {})
+    if "prizes" in existing_roulette:
+        data["Roulette"] = existing_roulette
     save_config(data)
     # Signal hot-reload if any bot process is running (including orphan/background).
     if is_any_bot_running()[0]:
@@ -452,19 +494,37 @@ def get_roulette_config():
     """Normalized Roulette block plus pool validation for the dashboard panel."""
     config = load_config()
     normalized = gift_roulette.normalize_config(config.get("Roulette"))
-    gifts = migrate_config_actions(config).get("Gifts", {})
+    gifts = migrate_config_actions(copy.deepcopy(config)).get("Gifts", {})
     catalog_rows = safe_json_read(paths.data("available_gifts.json"))
     catalog_by_id = gift_roulette.build_catalog_index(
         catalog_rows if isinstance(catalog_rows, list) else []
     )
+    if "prizes" not in normalized:
+        normalized = gift_roulette.migrate_prize_config(config, catalog_by_id)
+        config["Roulette"] = normalized
+        save_config(config)
+        if is_any_bot_running()[0]:
+            signal_reload()
     entries = gift_roulette.resolve_entries(
         normalized, gifts,
         config.get("GiftNames", {}) or {}, config.get("GiftDescriptions", {}) or {},
         catalog_by_id,
     )
+    gift_templates = []
+    for gid, bundle in gifts.items():
+        if str(gid) == "GlobalActions" or not isinstance(bundle, list) or not bundle:
+            continue
+        gid = str(gid)
+        display = gift_roulette.resolve_entries({"pool": [gid]}, gifts,
+            config.get("GiftNames", {}) or {}, config.get("GiftDescriptions", {}) or {}, catalog_by_id)
+        if display:
+            template = display[0]
+            template["actions"] = copy.deepcopy(bundle)
+            template["gift_name"] = (config.get("GiftNames") or {}).get(gid) or (catalog_by_id.get(gid) or {}).get("name") or template["label"]
+            gift_templates.append(template)
     warnings = []
     valid_ids = {e["gift_id"] for e in entries}
-    for gift_id in normalized["pool"]:
+    for gift_id in ([] if "prizes" in normalized else normalized["pool"]):
         if gift_id not in valid_ids:
             warnings.append(f"Pool entry {gift_id} is not a configured gift with actions")
     if normalized["enabled"] and len(valid_ids) < 2:
@@ -477,6 +537,7 @@ def get_roulette_config():
     resp = jsonify({
         "roulette": normalized,
         "resolved_entries": entries,
+        "gift_templates": gift_templates,
         "warnings": warnings,
     })
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -491,11 +552,20 @@ def update_roulette_config():
     arbitrary config — then saves through the existing save_config path so the
     active profile copy stays in sync, and signals hot-reload.
     """
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"message": "Roulette config must be an object"}), 400
+    if "prizes" in payload:
+        try:
+            payload["prizes"] = gift_roulette.validate_prizes(payload["prizes"])
+        except (ValueError, TypeError) as exc:
+            return jsonify({"message": str(exc)}), 400
     normalized = gift_roulette.normalize_config(payload)
 
     config = load_config()
-    gifts = migrate_config_actions(config).get("Gifts", {})
+    if "prizes" in (config.get("Roulette") or {}) and "prizes" not in payload:
+        return jsonify({"message": "Reload Roulette before saving: this profile now uses independent prizes"}), 409
+    gifts = migrate_config_actions(copy.deepcopy(config)).get("Gifts", {})
     catalog_rows = safe_json_read(paths.data("available_gifts.json"))
     catalog_by_id = gift_roulette.build_catalog_index(
         catalog_rows if isinstance(catalog_rows, list) else []
@@ -512,7 +582,7 @@ def update_roulette_config():
     if normalized["enabled"] and len(entries) < 2:
         warnings.append("Needs at least 2 valid pool entries — Roulette saved but left disabled")
         normalized["enabled"] = False
-    for gift_id in normalized["pool"]:
+    for gift_id in ([] if "prizes" in normalized else normalized["pool"]):
         if gift_id not in {e["gift_id"] for e in entries}:
             warnings.append(f"Pool entry {gift_id} is not a configured gift with actions")
 

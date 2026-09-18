@@ -39,6 +39,7 @@ import gift_catalog
 import gift_catalog_sync
 import gift_catalog_backfill
 import bot_flags
+import net_prefs
 import spotify_handler as sh
 from utils import load_json, save_json
 from constants import *
@@ -263,6 +264,8 @@ def _current_euler_api_key() -> str:
 
 def _sync_gift_regions_once():
     """Blocking region + full-catalog sync; always called via asyncio.to_thread."""
+    sync_state = paths.data(gift_catalog_sync.AUTO_SYNC_STATE_FILENAME)
+    ok = False
     try:
         path = paths.data("available_gifts.json")
         key = _current_euler_api_key()
@@ -297,8 +300,14 @@ def _sync_gift_regions_once():
             )
 
         print(f"[GIFT-CATALOG] Catalog now holds {len(gift_catalog.load_catalog(path))} gifts")
+        ok = not regions.get("error") and not catalog.get("error")
     except Exception as e:
         print(f"[GIFT-CATALOG] Catalog sync failed: {e}")
+    finally:
+        # Record the ATTEMPT, not just success. On a flaky link every reconnect
+        # used to re-run this ~48-request burst on the same connection the
+        # signed Websocket needs, making a dropping link drop harder.
+        gift_catalog_sync.record_auto_sync(sync_state, ok=ok)
 
 # Extract Data
 VIP_LIST = set(config.get("VIP_List", []))
@@ -439,6 +448,8 @@ def reload_config():
         EVENTS = config.get("Events", {})
         GLOBAL_COMMANDS = config.get("GlobalCommands", {})
         CUSTOM_EVENTS = config.get("CustomEvents", {})
+        # Network family preference is live-toggleable like every other setting.
+        net_prefs.apply_setting(config.get("Settings", {}))
         # Re-register dynamic event handlers
         register_dynamic_events()
         print(f"[HOT-RELOAD] Config reloaded successfully.")
@@ -1002,9 +1013,22 @@ async def on_connect(event: ConnectEvent):
     # Region sync backfills gifts TikTok hides from this room's panel — e.g.
     # Game Controller (6581/7569, 100 coins) exists in the US panel but not
     # Indonesia's. Runs off-loop so it never delays the connect path.
+    #
+    # It costs ~20 region requests plus up to 28 catalog pages at a 45s timeout
+    # each, so it is gated. Reconnects fire ConnectEvent again, and re-running
+    # that burst on a link that is already dropping starves the Websocket that
+    # delivers the events. The dashboard's Sync Gift Catalog button force-runs it.
     try:
         if _is_gift_region_sync_enabled():
-            asyncio.create_task(asyncio.to_thread(_sync_gift_regions_once))
+            # claim_auto_sync reserves the slot BEFORE the work starts, so a run
+            # interrupted by the operator closing the app still gates the next
+            # connect instead of re-firing the whole burst.
+            if gift_catalog_sync.claim_auto_sync(
+                    paths.data(gift_catalog_sync.AUTO_SYNC_STATE_FILENAME)):
+                asyncio.create_task(asyncio.to_thread(_sync_gift_regions_once))
+            else:
+                print("[GIFT-CATALOG] Region sync skipped — synced recently "
+                      "(use Sync Gift Catalog to force)", flush=True)
     except Exception as e:
         print(f"[GIFT-CATALOG] Could not start region sync: {e}")
 
@@ -1224,8 +1248,13 @@ def safe_json_write(data, log_file, retries=3, delay=0.05):
 # path). A background daemon thread flushes all dirty buffers to disk every
 # LOG_FLUSH_INTERVAL seconds (one batched write per file, off the event loop).
 # The dashboard keeps reading the json files as before — just refreshed every
-# ~2s instead of per-message. Post-stream reports are unaffected.
-LOG_FLUSH_INTERVAL = 2.0
+# ~1s instead of per-message. Post-stream reports are unaffected.
+#
+# 2.0s -> 1.0s: the flush interval is half of the app's chat/gift latency floor
+# (flush + dashboard poll), and it was the cheaper half to halve — the writes
+# stay batched and off the event loop, so doubling the write rate costs one
+# small file write per second, not one per message.
+LOG_FLUSH_INTERVAL = 1.0
 _log_buffers = {}            # log_file path -> list of entries
 _log_dirty = set()           # log_file paths with unflushed changes
 _log_buffer_lock = _threading.Lock()
@@ -2173,7 +2202,10 @@ async def on_comment(event: CommentEvent):
                                 # play_track_immediate (local-only architecture).
                                 # DO NOT push to Spotify's queue — that would make
                                 # !revoke impossible (Spotify has no remove-from-queue).
-                                sh.play_track_immediate(track["uri"])
+                                start_result = sh.play_track_immediate(track["uri"])
+                                if start_result.get("code") in ("song_blocked", "blocklist_unavailable"):
+                                    sh.push_song_feedback(nick, "error", "✗", f"@{nick} — {start_result['error']}")
+                                    return
                                 pos, entry = sh.get_next_to_play()
                                 if pos is not None:
                                     sh.mark_as_playing(pos)
@@ -2183,7 +2215,10 @@ async def on_comment(event: CommentEvent):
                                 # Loop song / non-user song is playing on Spotify,
                                 # and no user song is in our local queue → replace
                                 # context. The new track IS the new "now playing".
-                                sh.play_track_immediate(track["uri"])
+                                start_result = sh.play_track_immediate(track["uri"])
+                                if start_result.get("code") in ("song_blocked", "blocklist_unavailable"):
+                                    sh.push_song_feedback(nick, "error", "✗", f"@{nick} — {start_result['error']}")
+                                    return
                                 pos, entry = sh.get_next_to_play()
                                 if pos is not None:
                                     sh.mark_as_playing(pos)
@@ -2749,6 +2784,18 @@ def run_bot():
     print("Starting Main TikTok -> Minecraft Sync...", flush=True)
     print(f"Loaded {len(GIFT_ACTIONS)} configured gifts.", flush=True)
     bot_status.write_status(paths, "starting")
+
+    # Prefer IPv4 when the local IPv6 path is dead. A host that advertises an
+    # AAAA record otherwise makes every connect/reconnect burn its first attempt
+    # on an address family that can never answer. See net_prefs for the measured
+    # evidence; Settings.ForceIPv4 (default ON) turns it off.
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            _startup_cfg = yaml.safe_load(f) or {}
+        _ipv4 = net_prefs.apply_setting(_startup_cfg.get("Settings", {}))
+        print(f"[NET] IPv4 preferred: {'on' if _ipv4 else 'off (dual-stack)'}", flush=True)
+    except Exception as e:
+        print(f"[NET] Could not apply IPv4 preference: {e}", flush=True)
 
     from reconnect_policy import (
         INITIAL_RECONNECT_DELAY,

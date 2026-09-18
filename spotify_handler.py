@@ -19,6 +19,8 @@ import hashlib
 import json
 import os
 import secrets
+import sqlite3
+import re
 import time
 import threading
 import logging
@@ -45,6 +47,7 @@ QUEUE_FILE = paths.data("song_queue.json")
 HISTORY_FILE = paths.data("song_history.json")
 WORKER_LOG_FILE = paths.logs("song_queue_worker.log")
 BLOCKED_URIS_FILE = paths.data("song_blocked_uris.json")
+BLOCKLIST_FILE = paths.data("song_blocklist.sqlite3")
 FEEDBACK_FILE = paths.data("song_feedback.json")
 
 SPOTIFY_API_BASE = "https://api.spotify.com/v1"
@@ -225,6 +228,8 @@ def get_and_clear_feedback():
 def get_default_config():
     """Return the default song config."""
     return {
+        "loop_song_uri": "",  # Empty disables the queue-empty fallback.
+        "loop_song_track": None,  # Display metadata only; URI remains playback authority.
         "play_command": "!play",
         "skip_command": "!skip",
         "revoke_command": "!revoke",
@@ -892,6 +897,70 @@ def get_active_devices():
         return result
 
 
+def clean_default_track(track, uri):
+    """Validate bounded display metadata; never use it to control playback."""
+    if not isinstance(track, dict) or not uri or track.get("uri") != uri:
+        raise ValueError("Default song details must match the selected track.")
+    result = {"uri": uri}
+    for key in ("name", "artists", "album", "album_image"):
+        value = track.get(key, "")
+        if not isinstance(value, str) or len(value) > 2000:
+            raise ValueError("Invalid default song details.")
+        result[key] = value
+    if not result["name"].strip():
+        raise ValueError("Default song needs a title.")
+    if result["album_image"] and not result["album_image"].startswith("https://"):
+        raise ValueError("Default song artwork must use HTTPS.")
+    duration = track.get("duration_ms", 0)
+    if type(duration) is not int or not 0 <= duration <= 86400000:
+        raise ValueError("Invalid default song duration.")
+    result["duration_ms"] = duration
+    result["explicit"] = track.get("explicit") is True
+    return result
+
+
+_default_track_cache = {}
+_default_track_lock = threading.Lock()
+
+
+def get_default_track():
+    """Resolve old URI-only settings on demand, not on any playback hot path.
+
+    Picked metadata survives restart. Legacy lookups use a bounded single-flight
+    cache (including brief error caching); GET never rewrites settings.
+    """
+    cfg = load_config()
+    uri = cfg.get("loop_song_uri", "").strip()
+    response = {"uri": uri, "track": None}
+    if not uri:
+        return response
+    try:
+        response["track"] = clean_default_track(cfg.get("loop_song_track"), uri)
+        return response
+    except ValueError:
+        pass
+    if not re.fullmatch(r"spotify:track:[A-Za-z0-9]{22}", uri):
+        return dict(response, error="Choose a Spotify song using Search.")
+    with _default_track_lock:
+        now = time.monotonic()
+        cached = _default_track_cache.get(uri)
+        if cached and now < cached[0]:
+            return dict(cached[1])
+        try:
+            raw = _spotify_get("/tracks/" + uri.rsplit(":", 1)[1])
+            if "error" in raw:
+                error = raw["error"]
+                response["error"] = error if isinstance(error, str) else "Spotify song details are unavailable."
+            else:
+                response["track"] = clean_default_track(_simplify_track(raw), uri)
+        except (ValueError, TypeError, AttributeError):
+            response["error"] = "Spotify song details are unavailable."
+        if len(_default_track_cache) >= 32:
+            _default_track_cache.clear()
+        _default_track_cache[uri] = (now + (3600 if response["track"] else 30), dict(response))
+    return response
+
+
 def search_track(query, limit=5):
     """Search for a track on Spotify. Returns list of simplified tracks."""
     data = _spotify_get("/search", {"q": query, "type": "track", "limit": limit})
@@ -926,6 +995,9 @@ def _simplify_track(track):
 
 def queue_track(uri):
     """Queue a track to Spotify's active player. (Legacy — use play_track_immediate.)"""
+    denied = song_block_error(uri)
+    if denied:
+        return denied
     return _spotify_post(f"/me/player/queue?uri={uri}")
 
 
@@ -940,8 +1012,15 @@ def play_track_immediate(uri):
 
     Returns success dict or error dict.
     """
+    denied = song_block_error(uri)
+    if denied:
+        return denied
     # Disable repeat so the new track doesn't auto-loop
     _spotify_put("/me/player/repeat?state=off")
+    # Repeat-off may wait on Spotify; re-read live policy before the actual start.
+    denied = song_block_error(uri)
+    if denied:
+        return denied
     result = _spotify_put("/me/player/play", {
         "uris": [uri],
     })
@@ -965,7 +1044,7 @@ def play_next_from_queue():
 
     Returns True if a song was played, False if queue is empty or error.
     """
-    queue = load_queue()
+    queue = purge_blocked_queue()
     pos, entry = None, None
     for i, q in enumerate(queue):
         if q.get("status") == "queued":
@@ -1040,6 +1119,9 @@ def save_queue(queue):
 
 def add_to_queue(track, requested_by):
     """Add a track to the local song queue. Returns dict with success/error."""
+    denied = song_block_error(track.get("uri", ""))
+    if denied:
+        return denied
     cfg = load_config()
     queue = load_queue()
 
@@ -1129,6 +1211,8 @@ def mark_as_playing(position):
         if q.get("status") == "playing":
             q["status"] = "played"
     if position >= 0 and position < len(queue):
+        if song_block_error(queue[position].get("spotify_uri", "")):
+            return queue
         queue[position]["status"] = "playing"
     save_queue(queue)
     return queue
@@ -1136,7 +1220,7 @@ def mark_as_playing(position):
 
 def get_next_to_play():
     """Get the next queued track to play. Returns position and entry or None."""
-    queue = load_queue()
+    queue = purge_blocked_queue()
     for i, q in enumerate(queue):
         if q.get("status") == "queued":
             return i, q
@@ -1173,6 +1257,97 @@ def clear_history():
     if os.path.exists(HISTORY_FILE):
         os.remove(HISTORY_FILE)
     return {"success": True}
+
+
+# ── Persistent operator block list ─────────────────────────────────────────────
+
+def load_song_blocklist():
+    """Fresh cross-process read; never confuse permanent bans with revoke cleanup."""
+    if not os.path.exists(BLOCKLIST_FILE):
+        return []
+    with sqlite3.connect(BLOCKLIST_FILE, timeout=5) as db:
+        return [json.loads(row[0]) for row in db.execute(
+            "SELECT track FROM blocked_songs ORDER BY rowid DESC")]
+
+
+def song_block_error(uri):
+    try:
+        if any(t["uri"] == uri for t in load_song_blocklist()):
+            return {"error": "This song is blocked and cannot be queued or played.",
+                    "code": "song_blocked"}
+    except (sqlite3.Error, OSError, ValueError, KeyError, TypeError):
+        return {"error": "Song block list is unavailable. Playback refused for safety.",
+                "code": "blocklist_unavailable"}
+    return None
+
+
+def block_song(track):
+    if not isinstance(track, dict) or not re.fullmatch(
+            r"spotify:track:[A-Za-z0-9]{22}", str(track.get("uri", ""))):
+        raise ValueError("Choose a Spotify track from Search.")
+    track = clean_default_track(track, track["uri"])
+    os.makedirs(os.path.dirname(os.path.abspath(BLOCKLIST_FILE)), exist_ok=True)
+    with sqlite3.connect(BLOCKLIST_FILE, timeout=5) as db:
+        db.execute("CREATE TABLE IF NOT EXISTS blocked_songs (uri TEXT PRIMARY KEY, track TEXT NOT NULL)")
+        db.execute("INSERT OR REPLACE INTO blocked_songs VALUES (?, ?)",
+                   (track["uri"], json.dumps(track)))
+    purge_blocked_queue()
+    response = {"success": True, "tracks": load_song_blocklist()}
+    # A block is an explicit operator stop, unlike an ordinary settings save.
+    _playback_cache["cached_at"] = 0
+    try:
+        playback = get_current_playback()
+        if "error" in playback:
+            response["warning"] = "Song blocked. Spotify is unavailable; current playback could not be checked."
+        else:
+            stopped, warning = enforce_song_blocklist(playback)
+            if warning:
+                response["warning"] = warning
+    except Exception:
+        response["warning"] = "Song blocked. Current playback could not be stopped; the worker will retry."
+    return response
+
+
+def purge_blocked_queue():
+    """Drop active banned entries, including leftovers written by an older process."""
+    queue = load_queue()
+    # Let corrupt policy raise: do not destroy requests when the list is unreadable.
+    banned = {t["uri"] for t in load_song_blocklist()}
+    kept = [q for q in queue if not (q.get("spotify_uri") in banned
+            and q.get("status") in ("queued", "pushed", "playing"))]
+    if len(kept) != len(queue):
+        save_queue(kept)
+    return kept
+
+
+def enforce_song_blocklist(playback):
+    """Stop a banned currently-playing track; called on mutation and worker ticks.
+
+    External Spotify controls are observable only at the normal polling cadence.
+    Never resume a manual pause or use Spotify next (which can select another ban).
+    """
+    uri = (playback.get("item") or {}).get("uri", "")
+    if not uri or not playback.get("is_playing") or not song_block_error(uri):
+        return False, None
+    result = _spotify_put("/me/player/pause")
+    _playback_cache["cached_at"] = 0
+    if "error" in result:
+        return True, "Song blocked, but Spotify could not stop playback. The worker will retry."
+    purge_blocked_queue()
+    if not play_next_from_queue():
+        loop_uri = load_config().get("loop_song_uri", "").strip()
+        if loop_uri and not song_block_error(loop_uri):
+            play_track_immediate(loop_uri)
+    return True, None
+
+
+def unblock_song(track_id):
+    if not re.fullmatch(r"[A-Za-z0-9]{22}", track_id):
+        raise ValueError("Invalid Spotify track ID.")
+    if os.path.exists(BLOCKLIST_FILE):
+        with sqlite3.connect(BLOCKLIST_FILE, timeout=5) as db:
+            db.execute("DELETE FROM blocked_songs WHERE uri = ?", ("spotify:track:" + track_id,))
+    return {"success": True, "tracks": load_song_blocklist()}
 
 
 # ── Blocked URIs (revoked songs already pushed to Spotify) ──────────────────
@@ -1375,10 +1550,17 @@ def process_song_queue():
                 continue
 
             # Load the current local queue
-            queue = load_queue()
+            queue = purge_blocked_queue()
 
             # Sync playback state
             queue, last_seen_uri, state_changed, playback = _sync_playback_state(queue, last_seen_uri)
+            stopped, warning = enforce_song_blocklist(playback)
+            if stopped:
+                if warning:
+                    _log_worker(warning)
+                consecutive_idle_ticks = 0
+                PLAYING_URI = ""
+                continue
             if state_changed:
                 save_queue(queue)
                 _log_worker(f"Worker sync: state changed, queue updated")

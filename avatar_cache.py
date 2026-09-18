@@ -6,8 +6,10 @@ overlays to use later.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 import os
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -19,6 +21,49 @@ import paths
 AVATAR_ASSETS_DIR = os.path.join(paths.ASSETS_DIR, "avatar_cache")
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
 REQUEST_TIMEOUT = 8
+
+# Downloads run on a small background pool, never on the caller's thread.
+#
+# Why this matters: twelve async event handlers (follow, like, comment and nine
+# SuperFan paths) resolve avatars while running on the bot's asyncio loop. When
+# this module did its own `urlopen` inline, every uncached avatar that timed out
+# froze the entire bot for REQUEST_TIMEOUT seconds — no events processed and no
+# websocket keep-alive sent, which is what turns a lossy link into a dropped
+# connection. Two vCPUs is plenty for a trickle of 30KB images, and it keeps the
+# operator's machine light.
+_BACKGROUND_WORKERS = 2
+_pool: Optional[concurrent.futures.ThreadPoolExecutor] = None
+_pool_lock = threading.Lock()
+_inflight: set[str] = set()
+_inflight_cond = threading.Condition()
+
+
+def _executor() -> concurrent.futures.ThreadPoolExecutor:
+    global _pool
+    with _pool_lock:
+        if _pool is None:
+            _pool = concurrent.futures.ThreadPoolExecutor(
+                max_workers=_BACKGROUND_WORKERS, thread_name_prefix="avatar-fetch"
+            )
+        return _pool
+
+
+def pending_downloads() -> int:
+    """How many avatar downloads are queued or running."""
+    with _inflight_cond:
+        return len(_inflight)
+
+
+def wait_for_downloads(timeout: float = 10.0) -> bool:
+    """Block until scheduled downloads settle. Diagnostics/tests only."""
+    deadline = time.monotonic() + timeout
+    with _inflight_cond:
+        while _inflight:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            _inflight_cond.wait(remaining)
+        return True
 
 _CONTENT_TYPE_EXT = {
     "image/webp": ".webp",
@@ -90,11 +135,77 @@ def local_avatar_path_from_url(local_url: str) -> Optional[str]:
     return path
 
 
-def cache_avatar_image(source_url: str, nick: str = "", unique_id: str = "") -> str:
-    """Download a TikTok avatar URL and return a stable same-origin local URL.
+def _cached_url(stem: str, fallback_ext: str) -> str:
+    """Local URL when this avatar is already on disk, else ""."""
+    for ext in (fallback_ext, ".webp", ".jpg", ".png", ".gif"):
+        candidate = os.path.join(AVATAR_ASSETS_DIR, stem + ext)
+        try:
+            if os.path.exists(candidate) and os.path.getsize(candidate) > 0:
+                return f"/avatar_cache/{os.path.basename(candidate)}"
+        except OSError:
+            continue
+    return ""
 
-    Returns an empty string when download/validation fails. Callers should keep
-    using the source URL/fallback in that case.
+
+def cache_avatar_image(source_url: str, nick: str = "", unique_id: str = "") -> str:
+    """Return a cached local avatar URL, or queue a download and return "".
+
+    NEVER performs network I/O on the caller's thread. Twelve async event
+    handlers call this on the bot's asyncio loop, so an inline fetch froze the
+    whole bot for REQUEST_TIMEOUT seconds on every miss — no events processed and
+    no websocket keep-alive sent, which is what makes a lossy link drop.
+
+    First sighting of a user returns "" (callers fall back to the signed TikTok
+    URL they already hold) while the image downloads in the background; later
+    sightings return the local copy. Repeats for the same user are deduped, so a
+    chat burst cannot queue the same image twice.
+    """
+    source_url = str(source_url or "").strip()
+    if not source_url or is_local_avatar_url(source_url) or source_url.startswith("data:"):
+        return source_url if is_local_avatar_url(source_url) else ""
+
+    try:
+        os.makedirs(AVATAR_ASSETS_DIR, exist_ok=True)
+        fallback_ext = _ext_from_url(source_url)
+        stem = _safe_key(nick, unique_id, source_url)
+        cached = _cached_url(stem, fallback_ext)
+    except OSError:
+        return ""
+    if cached:
+        return cached
+
+    with _inflight_cond:
+        if stem in _inflight:
+            return ""
+        _inflight.add(stem)
+    try:
+        _executor().submit(_run_download, stem, source_url, nick, unique_id)
+    except Exception as exc:                                  # pool shut down?
+        with _inflight_cond:
+            _inflight.discard(stem)
+            _inflight_cond.notify_all()
+        print(f"[AVATAR-CACHE] Could not schedule avatar download for "
+              f"{nick or unique_id or 'unknown'}: {exc}")
+    return ""
+
+
+def _run_download(key: str, source_url: str, nick: str, unique_id: str) -> None:
+    """Pool worker wrapper: always releases the in-flight slot."""
+    try:
+        _download_avatar(source_url, nick, unique_id)
+    except Exception as exc:
+        print(f"[AVATAR-CACHE] Unexpected avatar cache error for "
+              f"{nick or unique_id or 'unknown'}: {exc}")
+    finally:
+        with _inflight_cond:
+            _inflight.discard(key)
+            _inflight_cond.notify_all()
+
+
+def _download_avatar(source_url: str, nick: str = "", unique_id: str = "") -> str:
+    """Blocking fetch + store. Returns the local URL, or "" on failure.
+
+    NEVER call this from the event loop — go through cache_avatar_image().
     """
     source_url = str(source_url or "").strip()
     if not source_url or is_local_avatar_url(source_url) or source_url.startswith("data:"):
@@ -105,11 +216,10 @@ def cache_avatar_image(source_url: str, nick: str = "", unique_id: str = "") -> 
         fallback_ext = _ext_from_url(source_url)
         stem = _safe_key(nick, unique_id, source_url)
 
-        # If this exact URL was already cached, reuse it without network.
-        for ext in (fallback_ext, ".webp", ".jpg", ".png", ".gif"):
-            candidate = os.path.join(AVATAR_ASSETS_DIR, stem + ext)
-            if os.path.exists(candidate) and os.path.getsize(candidate) > 0:
-                return f"/avatar_cache/{os.path.basename(candidate)}"
+        # Another worker (or an earlier run) may have stored it already.
+        cached = _cached_url(stem, fallback_ext)
+        if cached:
+            return cached
 
         req = urllib.request.Request(
             source_url,

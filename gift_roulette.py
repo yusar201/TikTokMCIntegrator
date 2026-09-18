@@ -26,6 +26,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from roulette_prizes import validate_prizes, validate_actions, safe_icon, migrate_prize_config
 from dataclasses import dataclass, field
 
 STATE_SCHEMA = 1
@@ -107,6 +108,9 @@ def normalize_config(raw: object) -> dict:
         if len(pool) >= MAX_POOL_ENTRIES:
             break
     cfg["pool"] = pool
+    if "prizes" in raw:
+        cfg["schema_version"] = 2
+        cfg["prizes"] = copy.deepcopy(raw["prizes"]) if isinstance(raw["prizes"], list) else []
     return cfg
 
 
@@ -210,6 +214,19 @@ def resolve_entries(config: dict, gifts: dict, gift_names: dict,
     Pool identity stays the real TikTok gift ID even when the actions live
     under a legacy lowercase-name key.
     """
+    if isinstance(config, dict) and "prizes" in config:
+        entries, seen = [], set()
+        for prize in config.get("prizes", [])[:MAX_POOL_ENTRIES]:
+            try:
+                p = validate_prizes([prize])[0]
+            except (ValueError, TypeError):
+                continue
+            if not p["enabled"] or p["id"] in seen:
+                continue
+            seen.add(p["id"])
+            entries.append(dict(gift_id=p["id"], prize_id=p["id"], label=p["name"],
+                                action_label=p["name"], icon_url=p["icon_url"], diamond_count=p["diamond_count"]))
+        return entries
     entries = []
     seen = set()
     pool = config.get("pool", []) if isinstance(config, dict) else []
@@ -306,11 +323,18 @@ def prepare_spin(config_snapshot: dict, gifts_snapshot: dict,
 
     winner = entries[rng.randrange(len(entries))]
     winner_id = winner["gift_id"]
-    action_key = _resolve_gift_key(winner_id, gifts_snapshot, catalog_by_id)
-    if action_key is None:
-        raise RouletteValidationError(f"winning gift {winner_id} is not configured")
-
-    bundle = copy.deepcopy(gifts_snapshot.get(action_key) or [])
+    prize = None
+    if "prizes" in config_snapshot:
+        try:
+            prize = next(p for p in config_snapshot["prizes"] if str(p.get("id")) == winner_id)
+            bundle = validate_actions(prize["actions"])
+        except (StopIteration, ValueError) as exc:
+            raise RouletteValidationError(str(exc)) from exc
+    else:
+        action_key = _resolve_gift_key(winner_id, gifts_snapshot, catalog_by_id)
+        if action_key is None:
+            raise RouletteValidationError(f"winning gift {winner_id} is not configured")
+        bundle = copy.deepcopy(gifts_snapshot.get(action_key) or [])
     if not isinstance(bundle, list) or not bundle:
         raise RouletteValidationError(f"winning gift {winner_id} has no action bundle")
 
@@ -340,6 +364,10 @@ def prepare_spin(config_snapshot: dict, gifts_snapshot: dict,
         "trigger_total_coin": str(trigger_ctx.get("total_coin", "")),
     }
 
+    if prize is not None:
+        winner_context.update(prize_id=winner_id, prize_name=winner["label"],
+                              gift_id=str(prize.get("source_gift_id") or ""),
+                              gift_name=str(prize.get("source_gift_name") or winner["label"]))
     reel = _build_reel(len(entries), entries.index(winner), rng)
 
     public_state = {
