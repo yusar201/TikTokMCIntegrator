@@ -14,6 +14,17 @@ Format:
 - Pending: <what remains / what the other agent should know>
 ```
 
+## 2026-09-18 07:47 — Sep-17 work committed (push pending): song default/block list, independent roulette prizes, connection diagnostics (by Hermes)
+- Branch/commit: main, 868a63e (this docs entry is the commit after it). Local commits `463f0ab` + `868a63e` are ready; `git push origin main` is still PENDING Khito's approval — a push attempt this pass was stopped at the tool approval gate, so `origin/main` does NOT yet contain either commit.
+- Files: app.py, avatar_cache.py, gift_catalog_sync.py, gift_roulette.py, minecraft_main.py, net_prefs.py (new), roulette_prizes.py (new), routes/spotify.py, spotify_handler.py, static/roulette_prizes.js (new), static/script.js, static/style.css, templates/index.html, + 14 new test files. 27 files, 4466+/167-.
+- Tests: full suite on Windows Python 3.13 (`/mnt/c/Python313/python.exe -m pytest -q`) → **1472 passed** in 140s (2026-09-18 07:44 WIB) on the exact committed tree, including the new untracked modules. Ports 5000/5001 free afterwards, no stray processes.
+- Deployed: no rebuild this pass. The committed code was already built+deployed Sep-17; Sep-18 was read-only artifact/parity checking only. Nothing in this pass touched `release/`.
+- Pending / WHAT MIMO SHOULD KNOW:
+  0. Working tree is now clean (`git status` → 0 modified, 0 untracked) and HEAD tracks everything the app imports — the "HEAD does not build the deployed app" risk recorded on 2026-09-12 is closed. Keep it that way: stage your own paths only, and don't `git checkout`/`stash -u`/`clean -fd`.
+  1. Khito has NOT live-tested the roulette prize changes yet (his Sep-18 words: "i haven't test the roulette yet, ill try it when im home"). Test-Spin FIFO path was approved Sep-15; a real in-stream gift burst and real multi-prize spins are still unverified. Dashboard needs Ctrl+Shift+R + OBS roulette source refresh before that test.
+  2. Also untested live: a blocked song refusing playback (packaged EXE block/unblock + persistence + queue refusal were verified with search fixtures, no Spotify token, so this is not a live playback-stop test) and live Minecraft prize execution for roulette.
+  3. Repo is PUBLIC (`yusar201/TikTokMCIntegrator`). Pushed on Khito's instruction. Don't commit `config.yml`, tokens, `data/`, `logs/`, or `release/` — .gitignore covers them.
+
 ---
 
 ## 2026-09-16 10:45 — Sep-14 tooltips + song-mirror, Sep-15 roulette FIFO queue (by Hermes)
