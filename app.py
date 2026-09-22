@@ -33,8 +33,21 @@ import paths
 import gift_catalog
 import gift_catalog_sync
 import gift_catalog_backfill
-from addons.survival_rush.runtime.api import create_survival_rush_blueprint
-from addons.survival_rush.runtime.service import SurvivalRushService
+try:
+    from addons.survival_rush.runtime.api import create_survival_rush_blueprint
+    from addons.survival_rush.runtime.service import SurvivalRushService
+    _SURVIVAL_RUSH_AVAILABLE = True
+except ImportError:
+    # The Survival Rush add-on is a personal, separately-distributed pack and is
+    # not part of this repository. Without it the app still runs; it just has no
+    # Objective Rush add-on registered.
+    create_survival_rush_blueprint = None
+    SurvivalRushService = None
+    _SURVIVAL_RUSH_AVAILABLE = False
+    print(
+        "[addons] Survival Rush add-on not present — skipping Objective Rush registration",
+        file=sys.stderr,
+    )
 import addon_loader
 import addon_runtime_registry
 from sim_console_log import append_line as append_sim_console_line
@@ -73,24 +86,26 @@ app.register_blueprint(
     )
 )
 
-survival_rush_service = SurvivalRushService(
-    paths.addons("survival_rush"),
-)
-app.register_blueprint(
-    create_survival_rush_blueprint(survival_rush_service),
-    url_prefix="/api/addons/survival-rush/objective-rush",
-)
-_survival_addon = addon_loader.load_addon("survival_rush")
-addon_runtime_registry.register(
-    "survival_rush",
-    survival_rush_service,
-    enabled=bool(_survival_addon and _survival_addon.get("enabled", False)),
-)
-if _survival_addon:
-    addon_runtime_registry.set_config(
-        "survival_rush", _survival_addon.get("config") or {}
+survival_rush_service = None
+if _SURVIVAL_RUSH_AVAILABLE:
+    survival_rush_service = SurvivalRushService(
+        paths.addons("survival_rush"),
     )
-atexit.register(addon_runtime_registry.unregister, "survival_rush")
+    app.register_blueprint(
+        create_survival_rush_blueprint(survival_rush_service),
+        url_prefix="/api/addons/survival-rush/objective-rush",
+    )
+    _survival_addon = addon_loader.load_addon("survival_rush")
+    addon_runtime_registry.register(
+        "survival_rush",
+        survival_rush_service,
+        enabled=bool(_survival_addon and _survival_addon.get("enabled", False)),
+    )
+    if _survival_addon:
+        addon_runtime_registry.set_config(
+            "survival_rush", _survival_addon.get("config") or {}
+        )
+    atexit.register(addon_runtime_registry.unregister, "survival_rush")
 
 # Gift Card Studio — overlay card designer. The catalog is read at request time
 # via load_config (defined below) so newly configured gifts appear without an
