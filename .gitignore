@@ -134,3 +134,4 @@ tools/survival_rush_acceptance.py
 tools/survival_rush_cutover.py
 tests/test_oneblock_objective_api.py
 tests/test_oneblock_objective_engine.py
+tests/test_oneblock_objective_simulation.py
