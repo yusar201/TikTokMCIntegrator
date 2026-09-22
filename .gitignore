@@ -117,3 +117,18 @@ assets/gift_assets/*.mp4
 # rollback copies are excluded.
 addons/*/mods/*.jar.bak*
 addons/*/mods/*.jar.pre-*
+
+# ---------------------------------------------------------------------------
+# Personal add-ons — NOT part of the shared repository.
+# Survival Rush (and any sibling pack) is developed locally here but is never
+# tracked or published: it is a personal project with its own distribution.
+# app.py imports it opportunistically (see _SURVIVAL_RUSH_AVAILABLE), so a
+# checkout without this directory still boots normally.
+# ---------------------------------------------------------------------------
+addons/
+objective_rush_headless.py
+tests/test_objective_rush_headless.py
+tests/test_survival_rush_*
+tools/simulate_survival_rush.py
+tools/survival_rush_acceptance.py
+tools/survival_rush_cutover.py
